@@ -110,6 +110,11 @@ export const checkLoFreq = rangeCheckerB(LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX)
 export const checkFreq = rangeCheckerB(FREQ_HZ_MIN, FREQ_HZ_MAX)
 export const checkIFreq = rangeCheckerB(IF_HZ_MIN, IF_HZ_MAX)
 
+export function checkInLength(buf: Buffer, minLength: number) {
+    if (buf.length >= minLength) return buf
+    throw new HackrfError(ErrorCode.LIBUSB)
+}
+
 
 // SAMPLE RATE CALCULATION
 

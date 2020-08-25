@@ -25,7 +25,7 @@ import {
 	HackrfError, checkU32, checkU16, checkU8, checkSpiflashAddress,
 	checkIFreq, checkLoFreq, checkBasebandFilterBw, checkFreq,
 	checkMax2837Reg, checkMax2837Value, checkSi5351cReg, checkSi5351cValue,
-	checkRffc5071Reg, checkRffc5071Value, calcSampleRate,
+	checkRffc5071Reg, checkRffc5071Value, calcSampleRate, checkInLength,
 } from './util'
 
 const USB_INTERFACE = 0
@@ -201,9 +201,7 @@ export class HackrfDevice {
 	 */
 	async getBoardId() {
 		const buf = await this.controlTransferIn(VendorRequest.BOARD_ID_READ, 0, 0, 1)
-		if (buf.length !== 1)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt8() as BoardId
+		return checkInLength(buf, 1).readUInt8() as BoardId
 	}
 
 	/**
@@ -211,8 +209,7 @@ export class HackrfDevice {
 	 */
 	async getBoardPartIdSerialNo() {
 		const buf = await this.controlTransferIn(VendorRequest.BOARD_PARTID_SERIALNO_READ, 0, 0, 24)
-		if (buf.length !== 24)
-			throw new HackrfError(ErrorCode.LIBUSB)
+		checkInLength(buf, 24)
 		const u32 = [0,1,2,3,4,5].map(x => buf.readUInt32LE(x * 4))
 		return {
 			partId: u32.slice(0, 2) as [ number, number ],
@@ -226,9 +223,7 @@ export class HackrfDevice {
 	async max2837_read(register: number) {
 		const buf = await this.controlTransferIn(VendorRequest.MAX2837_READ,
 			0, checkMax2837Reg(register), 2)
-		if (buf.length !== 2)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt16LE()
+		return checkInLength(buf, 2).readUInt16LE()
 	}
 
 	/**
@@ -245,9 +240,7 @@ export class HackrfDevice {
 	async si5351c_read(register: number) {
 		const buf = await this.controlTransferIn(VendorRequest.SI5351C_READ,
 			0, checkSi5351cReg(register), 1)
-		if (buf.length !== 1)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt8()
+		return checkInLength(buf, 1).readUInt8()
 	}
 
 	/**
@@ -264,9 +257,7 @@ export class HackrfDevice {
 	async rffc5071_read(register: number) {
 		const buf = await this.controlTransferIn(VendorRequest.RFFC5071_READ,
 			0, checkRffc5071Reg(register), 2)
-		if (buf.length !== 2)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt16LE()
+		return checkInLength(buf, 2).readUInt16LE()
 	}
 	
 	/**
@@ -300,9 +291,7 @@ export class HackrfDevice {
 		checkSpiflashAddress(address)
 		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_READ,
 			address >>> 16, address & 0xFFFF, length)
-		if (buf.length !== length)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf
+		return checkInLength(buf, length)
 	}
 	
 	/**
@@ -315,9 +304,7 @@ export class HackrfDevice {
 	async spiflash_getStatus() {
 		this.usbApiRequired(0x0103)
 		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_STATUS, 0, 0, 2)
-		if (buf.length < 1)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf // FIXME
+		return checkInLength(buf, 1) // FIXME
 	}
 	
 	/**
@@ -566,9 +553,7 @@ export class HackrfDevice {
 	async getOperacakeBoards() {
 		this.usbApiRequired(0x0102)
 		const buf = await this.controlTransferIn(VendorRequest.OPERACAKE_GET_BOARDS, 0, 0, 8)
-		if (buf.length !== 8)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return Array.from(buf)
+		return Array.from(checkInLength(buf, 8))
 	}
 
 	/**
@@ -615,9 +600,7 @@ export class HackrfDevice {
 	async operacakeGpioTest(address: number) {
 		this.usbApiRequired(0x0103)
 		const buf = await this.controlTransferIn(VendorRequest.OPERACAKE_GPIO_TEST, address, 0, 2)
-		if (buf.length < 1)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf // FIXME
+		return checkInLength(buf, 1) // FIXME
 	}
 
 	/**
@@ -643,9 +626,7 @@ export class HackrfDevice {
 	async cpld_checksum() {
 		this.usbApiRequired(0x0103)
 		const buf = await this.controlTransferIn(VendorRequest.CPLD_CHECKSUM, 0, 0, 4)
-		if (buf.length !== 4)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt32LE()
+		return checkInLength(buf, 4).readUInt32LE()
 	}
 
 	/**
