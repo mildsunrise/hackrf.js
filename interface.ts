@@ -7,7 +7,7 @@
 import { promisify } from 'util'
 
 import {
-	Device, OutEndpoint, LibUSBException,
+	Device, Interface, OutEndpoint, LibUSBException,
 	getDeviceList, findByIds,
 	LIBUSB_ERROR_NOT_SUPPORTED, LIBUSB_ERROR_INTERRUPTED, LIBUSB_TRANSFER_COMPLETED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
@@ -28,7 +28,6 @@ import {
 	checkRffc5071Reg, checkRffc5071Value, calcSampleRate, checkInLength,
 } from './util'
 
-const USB_INTERFACE = 0
 const TRANSFER_COUNT = 4
 const TRANSFER_BUFFER_SIZE = 262144
 
@@ -131,25 +130,21 @@ export class HackrfDevice {
 	 * it's recommended to use the `open` module function
 	 * instead of this function directly.
 	 * 
-	 * @param device USB device to open
+	 * @param device USB device (must not be open)
 	 */
 	static async open(device: Device) {
 		device.open(false)
 		await setHackrfConfiguration(device, USB_CONFIG_STANDARD)
-		device.interface(USB_INTERFACE).claim()
-		return new HackrfDevice(device)
+		const iface = device.interface(0)
+		iface.claim()
+		return new HackrfDevice(device, iface)
 	}
 
-	private constructor(handle: Device) {
-		this.handle = handle
-		
-		const cpldEndpoint = this.handle.interface(USB_INTERFACE)
-			.endpoint(LIBUSB_ENDPOINT_OUT | 2)
-		if (!(cpldEndpoint instanceof OutEndpoint))
+	private constructor(handle: Device, iface: Interface) {
+		this.handle = handle		
+		this.cpldEndpoint = iface.endpoint(2 | LIBUSB_ENDPOINT_OUT) as OutEndpoint
+		if (this.cpldEndpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
 			throw new HackrfError(ErrorCode.LIBUSB)
-		if (cpldEndpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		this.cpldEndpoint = cpldEndpoint
 	}
 
 	/**
