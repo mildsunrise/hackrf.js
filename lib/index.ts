@@ -14,4 +14,7 @@ export {
 	calcSampleRate,
 } from './util'
 
-export { DeviceInfo, HackrfDevice, listDevices, open } from './interface'
+export {
+	DeviceInfo, HackrfDevice, listDevices, open,
+	StreamOptions, defaultStreamOptions,
+} from './interface'

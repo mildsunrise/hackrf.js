@@ -67,7 +67,11 @@ export function computeBasebandFilterBw(bandwidthHz: number) {
 // VALIDATION
 
 export class HackrfError extends Error {
+	code: ErrorCode
 	constructor(code: ErrorCode) {
+		super(ErrorCode[code])
+		this.code = code
+		this.name = 'HackrfError'
 	}
 }
 

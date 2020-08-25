@@ -7,7 +7,7 @@
 import { promisify } from 'util'
 
 import {
-	Device, Interface, OutEndpoint, LibUSBException,
+	Device, Interface, Endpoint, InEndpoint, OutEndpoint, Transfer, LibUSBException,
 	getDeviceList, findByIds,
 	LIBUSB_ERROR_NOT_SUPPORTED, LIBUSB_ERROR_INTERRUPTED, LIBUSB_TRANSFER_COMPLETED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
@@ -28,8 +28,54 @@ import {
 	checkRffc5071Reg, checkRffc5071Value, calcSampleRate, checkInLength,
 } from './util'
 
-const TRANSFER_COUNT = 4
-const TRANSFER_BUFFER_SIZE = 262144
+export interface StreamOptions {
+	transferCount?: number
+	transferBufferSize?: number
+}
+
+export const defaultStreamOptions: StreamOptions = {
+	transferCount: 4,
+	transferBufferSize: 262144,
+}
+
+// promisifiable + cancellable version of transfer
+function transfer(endpoint: Endpoint, timeout: number, buffer: Buffer) {
+	let transfer: Transfer
+	const promise = promisify(cb =>
+		transfer = endpoint.makeTransfer(0, (error, _, length) => cb(error, length)) )()
+	return { promise: promise as Promise<number>, cancel: () => transfer.cancel() }
+}
+
+type PollCallback = (x: Buffer) => undefined | false
+async function poll(endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
+	const opts = { ...defaultStreamOptions, ...options }
+	const isOut = endpoint instanceof InEndpoint
+	const transfers: ReturnType<typeof transfer>[] = Array(opts.transferCount!)
+	const buffers = [...transfers].map(() => Buffer.alloc(opts.transferBufferSize!))
+	const submit = (i: number) => transfers[i] = transfer(endpoint, 0, buffers[i])
+	const work = (async () => {
+		// Prepare
+		for (let i = 0; i < transfers.length; i++) {
+			if (isOut && callback(buffers[i]) === false)
+				return
+			submit(i)
+		}
+		// Loop
+		while (true) {
+			const [length, i] = await Promise.race(
+				transfers.map( (x, i) => x.promise.then(length => [length, i]) ))
+			// FIXME: can length be smaller for isOut?
+			if (callback(isOut ? buffers[i] : buffers[i].slice(0, length)) === false)
+				return
+			submit(i)
+		}
+	})()
+	return transfers.reduce((p, x) =>
+		isOut ? p.then(() => x?.promise.then()) : p.finally(x?.cancel), work)
+}
+
+const getActiveConfig = (device: Device) =>
+	device.__getConfigDescriptor().bConfigurationValue
 
 function detachKernelDrivers(handle: Device) {
 	for (const iface of handle.interfaces) {
@@ -44,14 +90,6 @@ function detachKernelDrivers(handle: Device) {
 		if (active)
 			iface.detachKernelDriver()
 	}
-}
-
-async function setHackrfConfiguration(handle: Device, config: number) {
-	if (handle.getConfiguration() != config) {
-		detachKernelDrivers(handle)
-		await promisify(cb => handle.setConfiguration(config, cb as any) )()
-	}
-	detachKernelDrivers(handle)
 }
 
 // FIXME: library version & library release
@@ -116,12 +154,10 @@ export async function open(serialNumber?: string): Promise<HackrfDevice> {
 
 export class HackrfDevice {
 	private readonly handle: Device
-	private readonly cpldEndpoint: OutEndpoint
-	private transfers
-	private callback
-	private transfer_thread_started = false
-	private streaming = false
-	private do_exit = false
+	private readonly iface: Interface
+	private readonly inEndpoint: InEndpoint
+	private readonly outEndpoint: OutEndpoint
+	private _open: boolean = true
 
 	/**
 	 * Open the passed USB device
@@ -134,24 +170,53 @@ export class HackrfDevice {
 	 */
 	static async open(device: Device) {
 		device.open(false)
-		await setHackrfConfiguration(device, USB_CONFIG_STANDARD)
+		if (getActiveConfig(device) !== USB_CONFIG_STANDARD) {
+			detachKernelDrivers(device)
+			await promisify(cb => device.setConfiguration(USB_CONFIG_STANDARD, cb as any) )()
+		}
+		detachKernelDrivers(device)
 		const iface = device.interface(0)
 		iface.claim()
-		return new HackrfDevice(device, iface)
+		try {
+			if (getActiveConfig(device) !== USB_CONFIG_STANDARD)
+				throw new HackrfError(ErrorCode.LIBUSB)
+			return new HackrfDevice(device, iface)
+		} catch (e) {
+			await promisify(cb => iface.release(cb as any))()
+			device.close()
+			throw e
+		}
 	}
 
 	private constructor(handle: Device, iface: Interface) {
-		this.handle = handle		
-		this.cpldEndpoint = iface.endpoint(2 | LIBUSB_ENDPOINT_OUT) as OutEndpoint
-		if (this.cpldEndpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
+		this.handle = handle
+		this.iface = iface
+		this.outEndpoint = iface.endpoint(2 | LIBUSB_ENDPOINT_OUT) as OutEndpoint
+		if (this.outEndpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		this.inEndpoint = iface.endpoint(1 | LIBUSB_ENDPOINT_IN) as InEndpoint
+		if (this.inEndpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
 			throw new HackrfError(ErrorCode.LIBUSB)
 	}
 
+	get open() {
+		return this._open
+	}
+
 	/**
-	 * Cancel pending transfers and close the USB device.
+	 * Release resources and close the USB device
+	 * 
+	 * Unless the device is used until process exit, this **must** be
+	 * called once when it's no longer needed.
+	 * 
+	 * There must be no pending promises or an active transfer when
+	 * calling this. After return, no more methods should be called
+	 * on this object.
 	 */
-	close() {
-		// TODO
+	async close() {
+		await promisify(cb => this.iface.release(cb as any))()
+		this.handle.close()
+		this._open = false
 	}
 
 	get usbApiVersion() {
@@ -159,8 +224,7 @@ export class HackrfDevice {
 	}
 
 	private usbApiRequired(version: number) {
-		const usbVersion = this.usbApiVersion
-		if (usbVersion < version)
+		if (this.usbApiVersion < version)
 			throw new HackrfError(ErrorCode.USB_API_VERSION)
 	}
 
@@ -636,22 +700,73 @@ export class HackrfDevice {
 		await this.controlTransferOut(VendorRequest.UI_ENABLE, Number(value), 0)
 	}
 
-	// OTHER TRANSFERS
+	// DATA TRANSFERS
+
+	private _streaming: boolean = false
+
+	/**
+	 * Returns `true` if there's an active transfer.
+	 */
+	get streaming() {
+		return this._streaming
+	}
+
+	private async _whileStreaming(callback: () => Promise<void>) {
+		if (this._streaming)
+			throw new HackrfError(ErrorCode.BUSY)
+		try {
+			this._streaming = true
+			await callback()
+		} finally {
+			this._streaming = false
+		}
+	}
+
+	private async _transfer(mode: TransceiverMode, endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
+		await this._whileStreaming(async () => {
+			try {
+				await this.setTransceiverMode(mode)
+				await poll(endpoint, callback, options)
+			} finally {
+				await this.setTransceiverMode(TransceiverMode.OFF)
+			}
+		})
+	}
 
 	/**
 	 * TODO
+	 * 
+	 * 
+	 * @category Radio control
+	 */
+	async transmit(callback: PollCallback, options?: StreamOptions) {
+		await this._transfer(TransceiverMode.TRANSMIT, this.outEndpoint, callback, options)
+	}
+
+	async receive(callback: PollCallback, options?: StreamOptions) {
+		await this._transfer(TransceiverMode.RECEIVE, this.inEndpoint, callback, options)
+	}
+
+	async sweepReceive(callback: PollCallback, options?: StreamOptions) {
+		this.usbApiRequired(0x0104)
+		await this._transfer(TransceiverMode.RX_SWEEP, this.inEndpoint, callback, options)
+	}
+
+	/**
+	 * TODO
+	 * 
+	 * This throws if there's another transfer in progress.
 	 * 
 	 * device will need to be reset after this
 	 * 
 	 * @category CPLD
 	 */
-	async cpld_write(data: Buffer) {
-		await this.setTransceiverMode(TransceiverMode.CPLD_UPDATE)
-		const chunkSize = 512
-		for (let i = 0; i < data.length; i += chunkSize)
-			await promisify(cb => this.cpldEndpoint.transfer(
-				data.slice(i, i + chunkSize), cb as any) )()
+	async cpld_write(data: Buffer, chunkSize: number = 512) { // FIXME: make it a stream
+		await this._whileStreaming(async () => {
+			await this.setTransceiverMode(TransceiverMode.CPLD_UPDATE)
+			for (let i = 0; i < data.length; i += chunkSize)
+				await promisify(cb => this.outEndpoint.transfer(
+					data.slice(i, i + chunkSize), cb as any) )()
+		})
 	}
-	
-	// TODO: rx start & end
 }
