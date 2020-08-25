@@ -32,18 +32,18 @@ const TRANSFER_COUNT = 4
 const TRANSFER_BUFFER_SIZE = 262144
 
 function detachKernelDrivers(handle: Device) {
-    for (const iface of handle.interfaces) {
-        let active: boolean
-        try {
-            active = iface.isKernelDriverActive()
-        } catch (e) {
-            if (e instanceof LibUSBException && e.errno === LIBUSB_ERROR_NOT_SUPPORTED)
+	for (const iface of handle.interfaces) {
+		let active: boolean
+		try {
+			active = iface.isKernelDriverActive()
+		} catch (e) {
+			if (e instanceof LibUSBException && e.errno === LIBUSB_ERROR_NOT_SUPPORTED)
 				return
 			throw e
-        }
-        if (active)
-            iface.detachKernelDriver()
-    }
+		}
+		if (active)
+			iface.detachKernelDriver()
+	}
 }
 
 async function setHackrfConfiguration(handle: Device, config: number) {
@@ -72,10 +72,10 @@ function isValidDevice(device: Device) {
  * Return info about each HackRF device present.
  */
 export async function* listDevices() {
-    for (const device of getDeviceList().filter(isValidDevice)) {
-        const { idProduct, iSerialNumber } = device.deviceDescriptor
+	for (const device of getDeviceList().filter(isValidDevice)) {
+		const { idProduct, iSerialNumber } = device.deviceDescriptor
 		const info: DeviceInfo = { device, usbBoardId: idProduct }
-        if (iSerialNumber > 0) {
+		if (iSerialNumber > 0) {
 			try {
 				device.open(false)
 				// FIXME: original uses libusb_get_string_descriptor_ascii,
@@ -499,7 +499,7 @@ export class HackrfDevice {
 	 * Requires USB API 0x0102.
 	 * 
 	 * @param ranges is a list of start/stop pairs of frequencies in MHz,
-	 * 	   no more than [[MAX_SWEEP_RANGES]] entries.
+	 *     no more than [[MAX_SWEEP_RANGES]] entries.
 	 * @param numBytes the number of sample bytes to capture after each tuning.
 	 * @param stepWidth the width in Hz of the tuning step.
 	 * @param offset number of Hz added to every tuning frequency.
@@ -607,7 +607,7 @@ export class HackrfDevice {
 	 */
 	async setClkoutEnable(value: boolean) {
 		this.usbApiRequired(0x0103)
-		await this.controlTransferOut(VendorRequest.CLKOUT_ENABLE, Number(value), 0);
+		await this.controlTransferOut(VendorRequest.CLKOUT_ENABLE, Number(value), 0)
 	}
 
 	// FIXME: only for HACKRF_ISSUE_609_IS_FIXED

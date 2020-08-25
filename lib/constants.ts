@@ -38,14 +38,14 @@ export const errorMessages: { [code: number]: string } = {
 }
 
 export enum BoardId {
-	JELLYBEAN  = 0,
+	JELLYBEAN = 0,
 	JAWBREAKER = 1,
 	HACKRF_ONE = 2,
 	RAD1O = 3,
 }
 
 export const boardIdNames: { [boardId: number]: string } = {
-    [BoardId.JELLYBEAN]: 'Jellybean',
+	[BoardId.JELLYBEAN]: 'Jellybean',
 	[BoardId.JAWBREAKER]: 'Jawbreaker',
 	[BoardId.HACKRF_ONE]: 'HackRF One',
 	[BoardId.RAD1O]: 'rad1o',
@@ -88,15 +88,15 @@ export enum OperacakePorts {
 }
 
 export enum SweepStyle {
-    /**
-     * `stepWidth` is added to the current frequency at each step
-     */
-    LINEAR = 0,
-    /**
-     * invokes a scheme in which each step is divided into two
+	/**
+	 * `stepWidth` is added to the current frequency at each step
+	 */
+	LINEAR = 0,
+	/**
+	 * invokes a scheme in which each step is divided into two
 	 * interleaved sub-steps, allowing the host to select the best portions
 	 * of the FFT of each sub-step and discard the rest.
-     */
+	 */
 	INTERLEAVED = 1,
 }
 

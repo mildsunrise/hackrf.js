@@ -4,9 +4,9 @@
 /** */
 
 import {
-    ErrorCode,
-    LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX, FREQ_HZ_MIN, FREQ_HZ_MAX, IF_HZ_MIN, IF_HZ_MAX,
-    BASEBAND_FILTER_BW_MAX, BASEBAND_FILTER_BW_MIN
+	ErrorCode,
+	LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX, FREQ_HZ_MIN, FREQ_HZ_MAX, IF_HZ_MIN, IF_HZ_MAX,
+	BASEBAND_FILTER_BW_MAX, BASEBAND_FILTER_BW_MIN
 } from "./constants"
 
 
@@ -27,7 +27,7 @@ export const max2837_ft = [
 	15000000,
 	20000000,
 	24000000,
-    28000000,
+	28000000,
 ]
 
 /**
@@ -36,13 +36,13 @@ export const max2837_ft = [
  * Return final bw round down and less than expected bw.
  */
 export function computeBasebandFilterBwRoundDownLt(bandwidthHz: number) {
-    checkU32(bandwidthHz)
-    let idx: number
+	checkU32(bandwidthHz)
+	let idx: number
 	for (idx = 0; idx < max2837_ft.length; idx++) {
 		if (max2837_ft[idx] >= bandwidthHz) break
 	}
-    // Round down (if no equal to first entry)
-    idx = Math.max(idx - 1, 0)
+	// Round down (if no equal to first entry)
+	idx = Math.max(idx - 1, 0)
 	return max2837_ft[idx]
 }
 
@@ -52,15 +52,15 @@ export function computeBasebandFilterBwRoundDownLt(bandwidthHz: number) {
  * Return final bw
  */
 export function computeBasebandFilterBw(bandwidthHz: number) {
-    checkU32(bandwidthHz)
-    let idx: number
+	checkU32(bandwidthHz)
+	let idx: number
 	for (idx = 0; idx < max2837_ft.length; idx++) {
 		if (max2837_ft[idx] >= bandwidthHz) break
 	}
 	// Round down (if no equal to first entry) and if > bandwidthHz
 	if(max2837_ft[idx] >= bandwidthHz)
-        idx = Math.max(idx - 1, 0)
-	return max2837_ft[idx];
+		idx = Math.max(idx - 1, 0)
+	return max2837_ft[idx]
 }
 
 
@@ -98,12 +98,12 @@ export const checkRffc5071Value = bitChecker(16)
 export const checkSpiflashAddress = bitChecker(20)
 
 export const rangeChecker = (min: number, max: number) => (x: number) => {
-    if (x >= min && x <= max) return x
-    throw new HackrfError(ErrorCode.INVALID_PARAM)
+	if (x >= min && x <= max) return x
+	throw new HackrfError(ErrorCode.INVALID_PARAM)
 }
 export const rangeCheckerB = (min: bigint, max: bigint) => (x: bigint) => {
-    if (x >= min && x <= max) return x
-    throw new HackrfError(ErrorCode.INVALID_PARAM)
+	if (x >= min && x <= max) return x
+	throw new HackrfError(ErrorCode.INVALID_PARAM)
 }
 export const checkBasebandFilterBw = rangeChecker(BASEBAND_FILTER_BW_MIN, BASEBAND_FILTER_BW_MAX)
 export const checkLoFreq = rangeCheckerB(LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX)
@@ -111,40 +111,40 @@ export const checkFreq = rangeCheckerB(FREQ_HZ_MIN, FREQ_HZ_MAX)
 export const checkIFreq = rangeCheckerB(IF_HZ_MIN, IF_HZ_MAX)
 
 export function checkInLength(buf: Buffer, minLength: number) {
-    if (buf.length >= minLength) return buf
-    throw new HackrfError(ErrorCode.LIBUSB)
+	if (buf.length >= minLength) return buf
+	throw new HackrfError(ErrorCode.LIBUSB)
 }
 
 
 // SAMPLE RATE CALCULATION
 
 export function calcSampleRate(freqHz: number) {
-    const MAX_N = 32
-    const freq_frac = 1 + freqHz - Math.floor(freqHz)
+	const MAX_N = 32
+	const freq_frac = 1 + freqHz - Math.floor(freqHz)
 
-    // encode double as uint64
-    const buf = Buffer.alloc(8)
-    buf.writeDoubleLE(freqHz)
-    let u64 = buf.readBigUInt64LE()
+	// encode double as uint64
+	const buf = Buffer.alloc(8)
+	buf.writeDoubleLE(freqHz)
+	let u64 = buf.readBigUInt64LE()
 
-    const e = (u64 >> 52n) - 1023n
-    let m = (1n << 52n) - 1n
+	const e = (u64 >> 52n) - 1023n
+	let m = (1n << 52n) - 1n
 
-    v.d = freq_frac;
-    u64 &= m;
+	v.d = freq_frac;
+	u64 &= m;
 
-    m &= ~((1n << (e+4n)) - 1n)
+	m &= ~((1n << (e+4n)) - 1n)
 
-    a = 0;
+	a = 0;
 
-    for (i=1; i<MAX_N; i++) {
-        a += v.u64;
-        if (!(a & m) || !(~a & m))
-            break;
-    }
+	for (i=1; i<MAX_N; i++) {
+		a += v.u64;
+		if (!(a & m) || !(~a & m))
+			break;
+	}
 
-    if (i == MAX_N)
-        i = 1;
+	if (i == MAX_N)
+		i = 1;
 
-    return { freq_hz: (freqHz * i + 0.5) >>> 0, divider: i }
+	return { freq_hz: (freqHz * i + 0.5) >>> 0, divider: i }
 }
