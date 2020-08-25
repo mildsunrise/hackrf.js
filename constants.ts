@@ -1,3 +1,8 @@
+/**
+ * Enums and constants
+ */
+/** */
+
 export const SAMPLES_PER_BLOCK = 8192
 export const BYTES_PER_BLOCK = 16384
 export const MAX_SWEEP_RANGES = 10
@@ -96,6 +101,19 @@ export enum SweepStyle {
 }
 
 // INTERNAL
+
+export const FREQ_HZ_MIN = 0n
+/** 7250MHz */
+export const FREQ_HZ_MAX = 7250000000n
+export const IF_HZ_MIN = 2150000000n
+export const IF_HZ_MAX = 2750000000n
+export const LO_FREQ_HZ_MIN = 84375000n
+export const LO_FREQ_HZ_MAX = 5400000000n
+
+/** 1.75 MHz min value */
+export const BASEBAND_FILTER_BW_MIN = 1750000
+/** 28 MHz max value */
+export const BASEBAND_FILTER_BW_MAX = 28000000
 
 export const USB_HACKRF_VID = 0x1d50
 export const USB_CONFIG_STANDARD = 0x1

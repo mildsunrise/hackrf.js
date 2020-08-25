@@ -1,4 +1,13 @@
-import { ErrorCode } from "./constants"
+/**
+ * Contains validation logic and other computations
+ */
+/** */
+
+import {
+    ErrorCode,
+    LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX, FREQ_HZ_MIN, FREQ_HZ_MAX, IF_HZ_MIN, IF_HZ_MAX,
+    BASEBAND_FILTER_BW_MAX, BASEBAND_FILTER_BW_MIN
+} from "./constants"
 
 
 /** each entry is a uint32 (bandwidth in hz) */
@@ -87,6 +96,19 @@ export function checkRffc5071Reg(x: number) {
 }
 export const checkRffc5071Value = bitChecker(16)
 export const checkSpiflashAddress = bitChecker(20)
+
+export const rangeChecker = (min: number, max: number) => (x: number) => {
+    if (x >= min && x <= max) return x
+    throw new HackrfError(ErrorCode.INVALID_PARAM)
+}
+export const rangeCheckerB = (min: bigint, max: bigint) => (x: bigint) => {
+    if (x >= min && x <= max) return x
+    throw new HackrfError(ErrorCode.INVALID_PARAM)
+}
+export const checkBasebandFilterBw = rangeChecker(BASEBAND_FILTER_BW_MIN, BASEBAND_FILTER_BW_MAX)
+export const checkLoFreq = rangeCheckerB(LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX)
+export const checkFreq = rangeCheckerB(FREQ_HZ_MIN, FREQ_HZ_MAX)
+export const checkIFreq = rangeCheckerB(IF_HZ_MIN, IF_HZ_MAX)
 
 
 // SAMPLE RATE CALCULATION

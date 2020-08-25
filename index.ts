@@ -7,7 +7,7 @@ export {
     ErrorCode, errorMessages,
 } from './constants'
 
-import {
+export {
     HackrfError,
     computeBasebandFilterBwRoundDownLt,
     computeBasebandFilterBw,

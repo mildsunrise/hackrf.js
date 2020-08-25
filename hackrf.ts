@@ -1,11 +1,17 @@
+/**
+ * Main module, contains the USB interfacing code
+ * and user-facing API
+ */
+/** */
+
 import { promisify } from 'util'
 
 import {
-	Device, LibUSBException,
+	Device, OutEndpoint, LibUSBException,
 	getDeviceList, findByIds,
 	LIBUSB_ERROR_NOT_SUPPORTED, LIBUSB_ERROR_INTERRUPTED, LIBUSB_TRANSFER_COMPLETED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
-	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, OutEndpoint, LIBUSB_TRANSFER_TYPE_BULK,
+	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK,
 } from 'usb'
 
 import {
@@ -17,6 +23,7 @@ import {
 
 import {
 	HackrfError, checkU32, checkU16, checkU8, checkSpiflashAddress,
+	checkIFreq, checkLoFreq, checkBasebandFilterBw, checkFreq,
 	checkMax2837Reg, checkMax2837Value, checkSi5351cReg, checkSi5351cValue,
 	checkRffc5071Reg, checkRffc5071Value, calcSampleRate,
 } from './util'
@@ -110,12 +117,22 @@ export async function open(serialNumber?: string): Promise<HackrfDevice> {
 
 export class HackrfDevice {
 	private readonly handle: Device
+	private readonly cpldEndpoint: OutEndpoint
 	private transfers
 	private callback
 	private transfer_thread_started = false
 	private streaming = false
 	private do_exit = false
 
+	/**
+	 * Open the passed USB device
+	 * 
+	 * This function does **not** validate the device,
+	 * it's recommended to use the `open` module function
+	 * instead of this function directly.
+	 * 
+	 * @param device USB device to open
+	 */
 	static async open(device: Device) {
 		device.open(false)
 		await setHackrfConfiguration(device, USB_CONFIG_STANDARD)
@@ -125,6 +142,21 @@ export class HackrfDevice {
 
 	private constructor(handle: Device) {
 		this.handle = handle
+		
+		const cpldEndpoint = this.handle.interface(USB_INTERFACE)
+			.endpoint(LIBUSB_ENDPOINT_OUT | 2)
+		if (!(cpldEndpoint instanceof OutEndpoint))
+			throw new HackrfError(ErrorCode.LIBUSB)
+		if (cpldEndpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		this.cpldEndpoint = cpldEndpoint
+	}
+
+	/**
+	 * Cancel pending transfers and close the USB device.
+	 */
+	close() {
+		// TODO
 	}
 
 	get usbApiVersion() {
@@ -155,12 +187,18 @@ export class HackrfDevice {
 		await this.controlTransferOut(VendorRequest.SET_TRANSCEIVER_MODE, value, 0)
 	}
 
+	/**
+	 * @category Device info
+	 */
 	async getVersionString() {
 		// FIXME: is 64 bytes enough? is encoding correct?
 		const buf = await this.controlTransferIn(VendorRequest.VERSION_STRING_READ, 0, 0, 64)
 		return buf.toString('utf-8')
 	}
 
+	/**
+	 * @category Device info
+	 */
 	async getBoardId() {
 		const buf = await this.controlTransferIn(VendorRequest.BOARD_ID_READ, 0, 0, 1)
 		if (buf.length !== 1)
@@ -168,151 +206,9 @@ export class HackrfDevice {
 		return buf.readUInt8() as BoardId
 	}
 
-	async max2837_read(register: number) {
-		const buf = await this.controlTransferIn(VendorRequest.MAX2837_READ,
-			0, checkMax2837Reg(register), 2)
-		if (buf.length !== 2)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt16LE()
-	}
-
-	async max2837_write(register: number, value: number) {
-		await this.controlTransferOut(VendorRequest.MAX2837_WRITE,
-			checkMax2837Value(value), checkMax2837Reg(register))
-	}
-
-	async si5351c_read(register: number) {
-		const buf = await this.controlTransferIn(VendorRequest.SI5351C_READ,
-			0, checkSi5351cReg(register), 1)
-		if (buf.length !== 1)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt8()
-	}
-
-	async si5351c_write(register: number, value: number) {
-		await this.controlTransferOut(VendorRequest.SI5351C_WRITE,
-			checkSi5351cValue(value), checkSi5351cReg(register))
-	}
-
-	async setBasebandFilterBandwidth(bandwidthHz: number) {
-		checkU32(bandwidthHz)
-		await this.controlTransferOut(VendorRequest.BASEBAND_FILTER_BANDWIDTH_SET,
-			bandwidthHz & 0xffff, bandwidthHz >>> 16)
-	}
-
-	async rffc5071_read(register: number) {
-		const buf = await this.controlTransferIn(VendorRequest.RFFC5071_READ,
-			0, checkRffc5071Reg(register), 2)
-		if (buf.length !== 2)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf.readUInt16LE()
-	}
-	
-	async rffc5071_write(register: number, value: number) {
-		await this.controlTransferOut(VendorRequest.RFFC5071_WRITE,
-			checkRffc5071Value(value), checkRffc5071Reg(register))
-	}
-	
-	async spiflash_erase() {
-		await this.controlTransferOut(VendorRequest.SPIFLASH_ERASE, 0, 0)
-	}
-
-	async spiflash_write(address: number, data: Buffer) {
-		checkSpiflashAddress(address)
-		await this.controlTransferOut(VendorRequest.SPIFLASH_WRITE,
-			address >>> 16, address & 0xFFFF, data)
-	}
-	
-	async spiflash_read(address: number, length: number) {
-		checkSpiflashAddress(address)
-		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_READ,
-			address >>> 16, address & 0xFFFF, length)
-		if (buf.length !== length)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf
-	}
-	
-	async spiflash_getStatus() {
-		this.usbApiRequired(0x0103)
-		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_STATUS, 0, 0, 2)
-		if (buf.length < 1)
-			throw new HackrfError(ErrorCode.LIBUSB)
-		return buf // FIXME
-	}
-	
-	async spiflash_clearStatus() {
-		this.usbApiRequired(0x0103)
-		await this.controlTransferOut(VendorRequest.SPIFLASH_CLEAR_STATUS, 0, 0)
-	}
-
-	async setFreq(freqHz: bigint) {
-		// convert Freq Hz 64bits to Freq MHz (32bits) & Freq Hz (32bits)
-		const FREQ_ONE_MHZ = BigInt(1000*1000)
-		const data = Buffer.alloc(8)
-		data.writeUInt32LE(Number(freqHz / FREQ_ONE_MHZ), 0)
-		data.writeUInt32LE(Number(freqHz % FREQ_ONE_MHZ), 4)
-		await this.controlTransferOut(VendorRequest.SET_FREQ, 0, 0, data)
-	}
-
 	/**
-	 * @param ifFreqHz intermediate frequency
-	 * @param loFreqHz front-end local oscillator frequency
-	 * @param path image rejection filter path
+	 * @category Device info
 	 */
-	async setFreqExplicit(ifFreqHz: bigint, loFreqHz: bigint, path: RfPathFilter) {
-		if (ifFreqHz < 2150000000n || ifFreqHz > 2750000000n)
-			throw new HackrfError(ErrorCode.INVALID_PARAM)
-
-		if (path !== RfPathFilter.BYPASS &&
-				(loFreqHz < 84375000n || loFreqHz > 5400000000n))
-			throw new HackrfError(ErrorCode.INVALID_PARAM)
-
-		if (path > 2)
-			throw new HackrfError(ErrorCode.INVALID_PARAM)
-
-		const data = Buffer.alloc(8 + 8 + 1)
-		data.writeBigUInt64LE(ifFreqHz, 0)
-		data.writeBigUInt64LE(loFreqHz, 8)
-		data.writeUInt8(path, 16)
-		await this.controlTransferOut(VendorRequest.SET_FREQ_EXPLICIT, 0, 0, data)
-	}
-
-	/**
-	 * You should probably use [[setSampleRate]] instead of this
-	 * function.
-	 * 
-	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
-	 * widest available setting that is no more than 75% of the sample rate.  This
-	 * happens every time the sample rate is set.  If you want to override the
-	 * baseband filter selection, you must do so after setting the sample rate.
-	 * 
-	 * 2-20Mhz - as a fraction, i.e. freq 20000000 divider 2 -> 10Mhz
-	 */
-	async setSampleRateManual(freqHz: number, divider: number) {
-		const data = Buffer.alloc(8)
-		data.writeUInt32LE(freqHz, 0)
-		data.writeUInt32LE(divider, 4)
-		await this.controlTransferOut(VendorRequest.SAMPLE_RATE_SET, 0, 0, data)
-	}
-
-	/**
-	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
-	 * widest available setting that is no more than 75% of the sample rate.  This
-	 * happens every time the sample rate is set.  If you want to override the
-	 * baseband filter selection, you must do so after setting the sample rate.
-	 * 
-	 * @param freqHz frequency in Hz, 2-20MHz (double)
-	 */
-	async setSampleRate(freqHz: number) {
-		const result = calcSampleRate(freqHz)
-		return this.setSampleRateManual(result.freq_hz, result.divider)
-	}
-
-	/** enable / disable external amp */
-	async setAmpEnable(value: boolean) {
-		await this.controlTransferOut(VendorRequest.AMP_ENABLE, Number(value), 0)
-	}
-
 	async getBoardPartIdSerialNo() {
 		const buf = await this.controlTransferIn(VendorRequest.BOARD_PARTID_SERIALNO_READ, 0, 0, 24)
 		if (buf.length !== 24)
@@ -324,50 +220,301 @@ export class HackrfDevice {
 		}
 	}
 
-	/** range 0-40 step 8d, IF gain in osmosdr */
-	async setLnaGain(value: number) {
-		if (checkU32(value) > 40)
+	/**
+	 * @category IC control
+	 */
+	async max2837_read(register: number) {
+		const buf = await this.controlTransferIn(VendorRequest.MAX2837_READ,
+			0, checkMax2837Reg(register), 2)
+		if (buf.length !== 2)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		return buf.readUInt16LE()
+	}
+
+	/**
+	 * @category IC control
+	 */
+	async max2837_write(register: number, value: number) {
+		await this.controlTransferOut(VendorRequest.MAX2837_WRITE,
+			checkMax2837Value(value), checkMax2837Reg(register))
+	}
+
+	/**
+	 * @category IC control
+	 */
+	async si5351c_read(register: number) {
+		const buf = await this.controlTransferIn(VendorRequest.SI5351C_READ,
+			0, checkSi5351cReg(register), 1)
+		if (buf.length !== 1)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		return buf.readUInt8()
+	}
+
+	/**
+	 * @category IC control
+	 */
+	async si5351c_write(register: number, value: number) {
+		await this.controlTransferOut(VendorRequest.SI5351C_WRITE,
+			checkSi5351cValue(value), checkSi5351cReg(register))
+	}
+
+	/**
+	 * @category IC control
+	 */
+	async rffc5071_read(register: number) {
+		const buf = await this.controlTransferIn(VendorRequest.RFFC5071_READ,
+			0, checkRffc5071Reg(register), 2)
+		if (buf.length !== 2)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		return buf.readUInt16LE()
+	}
+	
+	/**
+	 * @category IC control
+	 */
+	async rffc5071_write(register: number, value: number) {
+		await this.controlTransferOut(VendorRequest.RFFC5071_WRITE,
+			checkRffc5071Value(value), checkRffc5071Reg(register))
+	}
+	
+	/**
+	 * @category Flash
+	 */
+	async spiflash_erase() {
+		await this.controlTransferOut(VendorRequest.SPIFLASH_ERASE, 0, 0)
+	}
+
+	/**
+	 * @category Flash
+	 */
+	async spiflash_write(address: number, data: Buffer) {
+		checkSpiflashAddress(address)
+		await this.controlTransferOut(VendorRequest.SPIFLASH_WRITE,
+			address >>> 16, address & 0xFFFF, data)
+	}
+	
+	/**
+	 * @category Flash
+	 */
+	async spiflash_read(address: number, length: number) {
+		checkSpiflashAddress(address)
+		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_READ,
+			address >>> 16, address & 0xFFFF, length)
+		if (buf.length !== length)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		return buf
+	}
+	
+	/**
+	 * TODO
+	 * 
+	 * Requires USB API 0x0103.
+	 * 
+	 * @category Flash
+	 */
+	async spiflash_getStatus() {
+		this.usbApiRequired(0x0103)
+		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_STATUS, 0, 0, 2)
+		if (buf.length < 1)
+			throw new HackrfError(ErrorCode.LIBUSB)
+		return buf // FIXME
+	}
+	
+	/**
+	 * TODO
+	 * 
+	 * Requires USB API 0x0103.
+	 * 
+	 * @category Flash
+	 */
+	async spiflash_clearStatus() {
+		this.usbApiRequired(0x0103)
+		await this.controlTransferOut(VendorRequest.SPIFLASH_CLEAR_STATUS, 0, 0)
+	}
+
+	/**
+	 * Set baseband filter bandwidth in Hz
+	 * 
+	 * Possible values: 1.75/2.5/3.5/5/5.5/6/7/8/9/10/12/14/15/20/24/28MHz
+	 * 
+	 * @category Radio control
+	 */
+	async setBasebandFilterBandwidth(freqHz: number) {
+		checkBasebandFilterBw(checkU32(freqHz))
+		await this.controlTransferOut(VendorRequest.BASEBAND_FILTER_BANDWIDTH_SET,
+			freqHz & 0xffff, freqHz >>> 16)
+	}
+
+	/**
+	 * Set the tuning frequency
+	 * 
+	 * @category Radio control
+	 */
+	async setFrequency(freqHz: bigint) {
+		checkFreq(freqHz)
+		// convert Freq Hz 64bits to Freq MHz (32bits) & Freq Hz (32bits)
+		const FREQ_ONE_MHZ = BigInt(1000*1000)
+		const data = Buffer.alloc(8)
+		data.writeUInt32LE(Number(freqHz / FREQ_ONE_MHZ), 0)
+		data.writeUInt32LE(Number(freqHz % FREQ_ONE_MHZ), 4)
+		await this.controlTransferOut(VendorRequest.SET_FREQ, 0, 0, data)
+	}
+
+	/**
+	 * Set the tuning frequency (raw version)
+	 * 
+	 * @param iFreqHz intermediate frequency
+	 * @param loFreqHz front-end local oscillator frequency
+	 * @param path image rejection filter path
+	 * @category Radio control
+	 */
+	async setFrequencyExplicit(iFreqHz: bigint, loFreqHz: bigint, path: RfPathFilter) {
+		checkIFreq(iFreqHz)
+		if (path !== RfPathFilter.BYPASS)
+			checkLoFreq(loFreqHz)
+		if (path > 2)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
-		value &= ~0x07
-		const buf = await this.controlTransferIn(VendorRequest.SET_LNA_GAIN, 0, value, 1)
+
+		const data = Buffer.alloc(8 + 8 + 1)
+		data.writeBigUInt64LE(iFreqHz, 0)
+		data.writeBigUInt64LE(loFreqHz, 8)
+		data.writeUInt8(path, 16)
+		await this.controlTransferOut(VendorRequest.SET_FREQ_EXPLICIT, 0, 0, data)
+	}
+
+	/**
+	 * Set the sample rate (raw version)
+	 * 
+	 * You should probably use [[setSampleRate]] instead of this
+	 * function.
+	 * 
+	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
+	 * widest available setting that is no more than 75% of the sample rate.  This
+	 * happens every time the sample rate is set.  If you want to override the
+	 * baseband filter selection, you must do so after setting the sample rate.
+	 * 
+	 * 2-20Mhz - as a fraction, i.e. freq 20000000 divider 2 -> 10Mhz
+	 * 
+	 * @category Radio control
+	 */
+	async setSampleRateManual(freqHz: number, divider: number) {
+		const data = Buffer.alloc(8)
+		data.writeUInt32LE(freqHz, 0)
+		data.writeUInt32LE(divider, 4)
+		await this.controlTransferOut(VendorRequest.SAMPLE_RATE_SET, 0, 0, data)
+	}
+
+	/**
+	 * Set the sample rate
+	 * 
+	 * High-level version that uses [[calcSampleRate]] to derive
+	 * the frequency and divider.
+	 * 
+	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
+	 * widest available setting that is no more than 75% of the sample rate.  This
+	 * happens every time the sample rate is set.  If you want to override the
+	 * baseband filter selection, you must do so after setting the sample rate.
+	 * 
+	 * @param freqHz frequency in Hz, 2-20MHz (double)
+	 * 
+	 * @category Radio control
+	 */
+	async setSampleRate(freqHz: number) {
+		const result = calcSampleRate(freqHz)
+		return this.setSampleRateManual(result.freq_hz, result.divider)
+	}
+
+	/**
+	 * Enable / disable RX/TX RF external amplifier
+	 * 
+	 * @category Radio control
+	 */
+	async setAmpEnable(value: boolean) {
+		await this.controlTransferOut(VendorRequest.AMP_ENABLE, Number(value), 0)
+	}
+
+	/**
+	 * Set RX LNA (IF) gain, 0-40dB in 8dB steps
+	 * 
+	 * @category Radio control
+	 */
+	async setLnaGain(gainDb: number) {
+		if (checkU32(gainDb) > 40)
+			throw new HackrfError(ErrorCode.INVALID_PARAM)
+		gainDb &= ~0x07
+		const buf = await this.controlTransferIn(VendorRequest.SET_LNA_GAIN, 0, gainDb, 1)
 		if (buf.length != 1 || !buf.readUInt8())
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 	}
 
-	/** range 0-62 step 2db, BB gain in osmosdr */
-	async setVgaGain(value: number) {
-		if (checkU32(value) > 62)
+	/**
+	 * Set RX VGA (baseband) gain, 0-62dB in 2dB steps
+	 * 
+	 * @category Radio control
+	 */
+	async setVgaGain(gainDb: number) {
+		if (checkU32(gainDb) > 62)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
-		value &= ~0x01
-		const buf = await this.controlTransferIn(VendorRequest.SET_VGA_GAIN, 0, value, 1)
+		gainDb &= ~0x01
+		const buf = await this.controlTransferIn(VendorRequest.SET_VGA_GAIN, 0, gainDb, 1)
 		if (buf.length != 1 || !buf.readUInt8())
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 	}
 
-	/** range 0-47 step 1db */
-	async setTxVgaGain(value: number) {
-		if (checkU32(value) > 47)
+	/**
+	 * Set TX VGA (IF) gain, 0-47dB in 1dB steps
+	 * 
+	 * @category Radio control
+	 */
+	async setTxVgaGain(gainDb: number) {
+		if (checkU32(gainDb) > 47)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
-		const buf = await this.controlTransferIn(VendorRequest.SET_TXVGA_GAIN, 0, value, 1)
+		const buf = await this.controlTransferIn(VendorRequest.SET_TXVGA_GAIN, 0, gainDb, 1)
 		if (buf.length != 1 || !buf.readUInt8())
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 	}
 
-	/** antenna port power control */
+	/**
+	 * Antenna port power control
+	 * 
+	 * @category Radio control
+	 */
 	async setAntennaEnable(value: boolean) {
 		await this.controlTransferOut(VendorRequest.ANTENNA_ENABLE, Number(value), 0)
 	}
 
-	// All features below require USB API version 0x0102 or higher)
-
-	/** set hardware sync mode  */
+	/**
+	 * Enable / disable hardware sync
+	 * 
+	 * Multiple boards can be made to syncronize
+	 * their USB transfers through a GPIO connection
+	 * between them
+	 * 
+	 * Requires USB API 0x0102.
+	 * 
+	 * @category Radio control
+	 */
 	async setHwSyncMode(value: boolean) {
 		this.usbApiRequired(0x0102)
 		await this.controlTransferOut(VendorRequest.SET_HW_SYNC_MODE, Number(value), 0)
 	}
 
 	/**
+	 * Reset the device
+	 * 
+	 * Requires USB API 0x0102.
+	 * 
+	 * @category Radio control
+	 */
+	async reset() {
+		this.usbApiRequired(0x0102)
+		await this.controlTransferOut(VendorRequest.RESET, 0, 0)
+	}
+
+	/**
 	 * Initialize sweep mode
+	 * 
+	 * Requires USB API 0x0102.
 	 * 
 	 * @param ranges is a list of start/stop pairs of frequencies in MHz,
 	 * 	   no more than [[MAX_SWEEP_RANGES]] entries.
@@ -375,8 +522,9 @@ export class HackrfDevice {
 	 * @param stepWidth the width in Hz of the tuning step.
 	 * @param offset number of Hz added to every tuning frequency.
 	 *     Use to select center frequency based on the expected usable bandwidth.
+	 * @category Radio control
 	 */
-	async init_sweep(
+	async initSweep(
 		ranges: [number, number][], numBytes: number,
 		stepWidth: number, offset: number, style: SweepStyle
 	) {
@@ -408,7 +556,13 @@ export class HackrfDevice {
 			numBytes & 0xffff, (numBytes >>> 16) & 0xffff, data)
 	}
 
-	/** Retrieve list of Operacake board addresses (uint8) */
+	/**
+	 * Retrieve list of Operacake board addresses (uint8)
+	 * 
+	 * Requires USB API 0x0102.
+	 * 
+	 * @category Operacake
+	 */
 	async getOperacakeBoards() {
 		this.usbApiRequired(0x0102)
 		const buf = await this.controlTransferIn(VendorRequest.OPERACAKE_GET_BOARDS, 0, 0, 8)
@@ -417,7 +571,13 @@ export class HackrfDevice {
 		return Array.from(buf)
 	}
 
-	/** Set Operacake ports */
+	/**
+	 * Set Operacake ports
+	 * 
+	 * Requires USB API 0x0102.
+	 * 
+	 * @category Operacake
+	 */
 	async setOperacakePorts(address: number, portA: OperacakePorts, portB: OperacakePorts) {
 		this.usbApiRequired(0x0102)
 
@@ -433,22 +593,25 @@ export class HackrfDevice {
 			checkU8(address), portA | (portB << 8))
 	}
 
+	/**
+	 * TODO
+	 * 
+	 * Requires USB API 0x0103.
+	 * 
+	 * @category Operacake
+	 */
 	async setOperacakeRanges(ranges: Buffer) {
 		this.usbApiRequired(0x0103)
 		await this.controlTransferOut(VendorRequest.OPERACAKE_SET_RANGES, 0, 0, ranges)
 	}
 
-	async reset() {
-		this.usbApiRequired(0x0102)
-		await this.controlTransferOut(VendorRequest.RESET, 0, 0)
-	}
-
-	async setClkoutEnable(value: boolean) {
-		this.usbApiRequired(0x0103)
-		await this.controlTransferOut(VendorRequest.CLKOUT_ENABLE, Number(value), 0);
-	}
-
-	/** Returns test result (uint16) */
+	/**
+	 * Returns test result (uint16)
+	 * 
+	 * Requires USB API 0x0103.
+	 * 
+	 * @category Operacake
+	 */
 	async operacakeGpioTest(address: number) {
 		this.usbApiRequired(0x0103)
 		const buf = await this.controlTransferIn(VendorRequest.OPERACAKE_GPIO_TEST, address, 0, 2)
@@ -457,8 +620,26 @@ export class HackrfDevice {
 		return buf // FIXME
 	}
 
+	/**
+	 * TODO
+	 * 
+	 * Requires USB API 0x0103.
+	 * 
+	 * @category Radio control
+	 */
+	async setClkoutEnable(value: boolean) {
+		this.usbApiRequired(0x0103)
+		await this.controlTransferOut(VendorRequest.CLKOUT_ENABLE, Number(value), 0);
+	}
+
 	// FIXME: only for HACKRF_ISSUE_609_IS_FIXED
-	/** Returns crc32 (uint32) */
+	/**
+	 * Returns crc32 (uint32)
+	 * 
+	 * Requires USB API 0x0103.
+	 * 
+	 * @category CPLD
+	 */
 	async cpld_checksum() {
 		this.usbApiRequired(0x0103)
 		const buf = await this.controlTransferIn(VendorRequest.CPLD_CHECKSUM, 0, 0, 4)
@@ -467,25 +648,33 @@ export class HackrfDevice {
 		return buf.readUInt32LE()
 	}
 
+	/**
+	 * TODO
+	 * 
+	 * Requires USB API 0x0104.
+	 * 
+	 * @category Radio control
+	 */
 	async setUiEnable(value: boolean) {
 		this.usbApiRequired(0x0104)
 		await this.controlTransferOut(VendorRequest.UI_ENABLE, Number(value), 0)
 	}
 
 	// OTHER TRANSFERS
-	
-	/** device will need to be reset after this */
+
+	/**
+	 * TODO
+	 * 
+	 * device will need to be reset after this
+	 * 
+	 * @category CPLD
+	 */
 	async cpld_write(data: Buffer) {
 		await this.setTransceiverMode(TransceiverMode.CPLD_UPDATE)
-		const endpoint = this.handle.interface(USB_INTERFACE)
-			.endpoint(LIBUSB_ENDPOINT_OUT | 2)
-		if (!(endpoint instanceof OutEndpoint))
-			throw new HackrfError(ErrorCode.LIBUSB)
-		if (endpoint.transferType !== LIBUSB_TRANSFER_TYPE_BULK)
-			throw new HackrfError(ErrorCode.LIBUSB)
 		const chunkSize = 512
 		for (let i = 0; i < data.length; i += chunkSize)
-			await promisify(cb => endpoint.transfer(data.slice(i, i + chunkSize), cb as any) )()
+			await promisify(cb => this.cpldEndpoint.transfer(
+				data.slice(i, i + chunkSize), cb as any) )()
 	}
 	
 	// TODO: rx start & end
