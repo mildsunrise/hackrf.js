@@ -1,10 +1,9 @@
 {
-	"mode": "modules",
+	"mode": "library",
 	"excludePrivate": true,
 	"excludeProtected": true,
-	"excludeExternals": true,
+	"excludeExternals": false,
 	"excludeNotExported": true,
-	"exclude": "**/index.ts",
 	"target": "ES6",
 	"listInvalidSymbolLinks": true
 }
