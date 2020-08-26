@@ -118,33 +118,29 @@ export function checkInLength(buf: Buffer, minLength: number) {
 
 // SAMPLE RATE CALCULATION
 
-export function calcSampleRate(freqHz: number) {
-	const MAX_N = 32
-	const freq_frac = 1 + freqHz - Math.floor(freqHz)
+const f64toU = (x: number) => {
+	const f64a = Float64Array.of(x)
+	return new BigUint64Array(f64a.buffer, f64a.byteOffset)[0]
+}
 
-	// encode double as uint64
-	const buf = Buffer.alloc(8)
-	buf.writeDoubleLE(freqHz)
-	let u64 = buf.readBigUInt64LE()
+function chooseDivider(n: number) {
+	const n1 = BigInt(1), mask = (n1 << BigInt(52)) - n1
 
-	const e = (u64 >> 52n) - 1023n
-	let m = (1n << 52n) - 1n
+	const e = Number(f64toU(n) >> BigInt(52)) - 1023
+	const fracN = 1 + n - Math.floor(n)
+	const frac = f64toU(fracN) & mask
 
-	v.d = freq_frac;
-	u64 &= m;
+	const round = (x: bigint) => ( x + (n1 << BigInt(51)) ) & ~mask
+	const roundError = (x: bigint) => Math.abs(Number(x - round(x)))
 
-	m &= ~((1n << (e+4n)) - 1n)
-
-	a = 0;
-
-	for (i=1; i<MAX_N; i++) {
-		a += v.u64;
-		if (!(a & m) || !(~a & m))
-			break;
+	for (let divider = 1; divider <= 31; divider++) {
+		if (roundError(BigInt(divider) * frac) < 2**(e+4))
+			return divider
 	}
+	return 1
+}
 
-	if (i == MAX_N)
-		i = 1;
-
-	return { freq_hz: (freqHz * i + 0.5) >>> 0, divider: i }
+export function calcSampleRate(freqHz: number): [number, number] {
+	const divider = chooseDivider(freqHz)
+	return [ Math.round(freqHz * divider), divider ]
 }

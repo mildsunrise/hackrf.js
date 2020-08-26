@@ -11,7 +11,6 @@ export {
 	HackrfError,
 	computeBasebandFilterBwRoundDownLt,
 	computeBasebandFilterBw,
-	calcSampleRate,
 } from './util'
 
 export {

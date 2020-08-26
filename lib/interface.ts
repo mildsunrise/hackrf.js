@@ -453,9 +453,6 @@ export class HackrfDevice {
 	/**
 	 * Set the sample rate
 	 * 
-	 * High-level version that uses [[calcSampleRate]] to derive
-	 * the frequency and divider.
-	 * 
 	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
 	 * widest available setting that is no more than 75% of the sample rate.  This
 	 * happens every time the sample rate is set.  If you want to override the
@@ -466,8 +463,7 @@ export class HackrfDevice {
 	 * @category Radio control
 	 */
 	async setSampleRate(freqHz: number) {
-		const result = calcSampleRate(freqHz)
-		return this.setSampleRateManual(result.freq_hz, result.divider)
+		return this.setSampleRateManual(...calcSampleRate(freqHz))
 	}
 
 	/**
