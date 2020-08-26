@@ -8,14 +8,13 @@ import { promisify } from 'util'
 
 import {
 	Device, Interface, Endpoint, InEndpoint, OutEndpoint, Transfer, LibUSBException,
-	getDeviceList, findByIds,
-	LIBUSB_ERROR_NOT_SUPPORTED, LIBUSB_ERROR_INTERRUPTED, LIBUSB_TRANSFER_COMPLETED,
+	getDeviceList, findByIds, LIBUSB_ERROR_NOT_SUPPORTED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
 	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK,
 } from 'usb'
 
 import {
-	SAMPLES_PER_BLOCK, BYTES_PER_BLOCK, MAX_SWEEP_RANGES,
+	BYTES_PER_BLOCK, MAX_SWEEP_RANGES,
 	BoardId, UsbBoardId, RfPathFilter, OperacakePorts, SweepStyle,
 	USB_HACKRF_VID, USB_CONFIG_STANDARD, TransceiverMode, VendorRequest,
 	ErrorCode,
@@ -65,7 +64,7 @@ async function poll(endpoint: Endpoint, callback: PollCallback, options?: Stream
 			const [length, i] = await Promise.race(
 				transfers.map( (x, i) => x.promise.then(length => [length, i]) ))
 			// FIXME: can length be smaller for isOut?
-			if (callback(isOut ? buffers[i] : buffers[i].slice(0, length)) === false)
+			if (callback(isOut ? buffers[i] : buffers[i].subarray(0, length)) === false)
 				return
 			submit(i)
 		}
@@ -78,6 +77,9 @@ const getActiveConfig = (device: Device) =>
 	device.__getConfigDescriptor().bConfigurationValue
 
 function detachKernelDrivers(handle: Device) {
+	// FIXME: currently disabled because https://github.com/tessel/node-usb/pull/377
+	return
+
 	for (const iface of handle.interfaces) {
 		let active: boolean
 		try {
@@ -91,8 +93,6 @@ function detachKernelDrivers(handle: Device) {
 			iface.detachKernelDriver()
 	}
 }
-
-// FIXME: library version & library release
 
 export interface DeviceInfo {
 	device: Device
@@ -116,14 +116,11 @@ export async function* listDevices() {
 		if (iSerialNumber > 0) {
 			try {
 				device.open(false)
-				// FIXME: original uses libusb_get_string_descriptor_ascii,
-				// is there any magic we forgot to replicate?
 				info.serialNumber = await promisify(cb =>
 					device.getStringDescriptor(iSerialNumber, cb) )() as string
 			} catch (e) {
 			} finally {
 				device.close()
-				// FIXME: calling close a second time?
 			}
 		}
 		yield info
@@ -269,8 +266,7 @@ export class HackrfDevice {
 	 * @category Device info
 	 */
 	async getVersionString() {
-		// FIXME: is 64 bytes enough? is encoding correct?
-		const buf = await this.controlTransferIn(VendorRequest.VERSION_STRING_READ, 0, 0, 64)
+		const buf = await this.controlTransferIn(VendorRequest.VERSION_STRING_READ, 0, 0, 255)
 		return buf.toString('utf-8')
 	}
 
@@ -437,7 +433,7 @@ export class HackrfDevice {
 		checkIFreq(iFreqHz)
 		if (path !== RfPathFilter.BYPASS)
 			checkLoFreq(loFreqHz)
-		if (path > 2)
+		if (checkU32(path) > 2)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 
 		const data = Buffer.alloc(8 + 8 + 1)
@@ -598,7 +594,7 @@ export class HackrfDevice {
 		if(stepWidth < 1)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 
-		if(style > 1)
+		if(checkU32(style) > 1)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 
 		const data = Buffer.alloc(9 + ranges.length * 4)
@@ -687,19 +683,19 @@ export class HackrfDevice {
 		await this.controlTransferOut(VendorRequest.CLKOUT_ENABLE, Number(value), 0)
 	}
 
-	// FIXME: only for HACKRF_ISSUE_609_IS_FIXED
-	/**
-	 * Returns crc32 (uint32)
-	 * 
-	 * Requires USB API 0x0103.
-	 * 
-	 * @category CPLD
-	 */
-	async cpld_checksum() {
-		this.usbApiRequired(0x0103)
-		const buf = await this.controlTransferIn(VendorRequest.CPLD_CHECKSUM, 0, 0, 4)
-		return checkInLength(buf, 4).readUInt32LE()
-	}
+	// Disabled for now, see https://github.com/mossmann/hackrf/issues/609
+	// /**
+	//  * Returns crc32 (uint32)
+	//  * 
+	//  * Requires USB API 1.3.
+	//  * 
+	//  * @category Flash & CPLD
+	//  */
+	// async cpld_checksum() {
+	// 	this.usbApiRequired(0x0103)
+	// 	const buf = await this.controlTransferIn(VendorRequest.CPLD_CHECKSUM, 0, 0, 4)
+	// 	return checkInLength(buf, 4).readUInt32LE()
+	// }
 
 	/**
 	 * Enable / disable PortaPack display
@@ -778,7 +774,7 @@ export class HackrfDevice {
 			await this.setTransceiverMode(TransceiverMode.CPLD_UPDATE)
 			for (let i = 0; i < data.length; i += chunkSize)
 				await promisify(cb => this.outEndpoint.transfer(
-					data.slice(i, i + chunkSize), cb as any) )()
+					data.subarray(i, i + chunkSize), cb as any) )()
 		})
 	}
 }

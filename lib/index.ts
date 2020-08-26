@@ -1,3 +1,6 @@
+// Based on mossman/hackrf @ 6e5cbda2945c
+export const libraryVersion = '0.5'
+
 export {
 	SAMPLES_PER_BLOCK, BYTES_PER_BLOCK, MAX_SWEEP_RANGES,
 	BoardId, boardIdNames,
