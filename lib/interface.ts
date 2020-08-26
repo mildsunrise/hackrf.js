@@ -152,6 +152,20 @@ export async function open(serialNumber?: string): Promise<HackrfDevice> {
 	throw new HackrfError(ErrorCode.NOT_FOUND)
 }
 
+/**
+ * Reference to an open HackRF device
+ * 
+ * This is mostly a direct API to the USB interface. Call
+ * [[close]] when no longer needed.
+ * 
+ * Keep in mind some methods require a certain API version
+ * to be implemented by your device's firmware; this is noted
+ * in their documentation, and an `USB_API_VERSION` error will
+ * be thrown if you attempt to use them. [[usbApiVersion]]
+ * returns the version implemented by the firmware. It's
+ * strongly recommended to upgrade your device's firmware to
+ * the latest version to avoid problems and glitches.
+ */
 export class HackrfDevice {
 	private readonly handle: Device
 	private readonly iface: Interface
@@ -219,6 +233,11 @@ export class HackrfDevice {
 		this._open = false
 	}
 
+	/**
+	 * Version of the USB API implemented by the device's firmware
+	 * 
+	 * In `0xAABB` form (`AA` = major, `BB` = minor).
+	 */
 	get usbApiVersion() {
 		return this.handle.deviceDescriptor.bcdDevice
 	}
@@ -277,7 +296,7 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * @category IC control
+	 * @category IC
 	 */
 	async max2837_read(register: number) {
 		const buf = await this.controlTransferIn(VendorRequest.MAX2837_READ,
@@ -286,7 +305,7 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * @category IC control
+	 * @category IC
 	 */
 	async max2837_write(register: number, value: number) {
 		await this.controlTransferOut(VendorRequest.MAX2837_WRITE,
@@ -294,7 +313,7 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * @category IC control
+	 * @category IC
 	 */
 	async si5351c_read(register: number) {
 		const buf = await this.controlTransferIn(VendorRequest.SI5351C_READ,
@@ -303,7 +322,7 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * @category IC control
+	 * @category IC
 	 */
 	async si5351c_write(register: number, value: number) {
 		await this.controlTransferOut(VendorRequest.SI5351C_WRITE,
@@ -311,7 +330,7 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * @category IC control
+	 * @category IC
 	 */
 	async rffc5071_read(register: number) {
 		const buf = await this.controlTransferIn(VendorRequest.RFFC5071_READ,
@@ -320,7 +339,7 @@ export class HackrfDevice {
 	}
 	
 	/**
-	 * @category IC control
+	 * @category IC
 	 */
 	async rffc5071_write(register: number, value: number) {
 		await this.controlTransferOut(VendorRequest.RFFC5071_WRITE,
@@ -328,14 +347,14 @@ export class HackrfDevice {
 	}
 	
 	/**
-	 * @category Flash
+	 * @category Flash & CPLD
 	 */
 	async spiflash_erase() {
 		await this.controlTransferOut(VendorRequest.SPIFLASH_ERASE, 0, 0)
 	}
 
 	/**
-	 * @category Flash
+	 * @category Flash & CPLD
 	 */
 	async spiflash_write(address: number, data: Buffer) {
 		checkSpiflashAddress(address)
@@ -344,7 +363,7 @@ export class HackrfDevice {
 	}
 	
 	/**
-	 * @category Flash
+	 * @category Flash & CPLD
 	 */
 	async spiflash_read(address: number, length: number) {
 		checkSpiflashAddress(address)
@@ -356,9 +375,9 @@ export class HackrfDevice {
 	/**
 	 * TODO
 	 * 
-	 * Requires USB API 0x0103.
+	 * Requires USB API 1.3.
 	 * 
-	 * @category Flash
+	 * @category Flash & CPLD
 	 */
 	async spiflash_getStatus() {
 		this.usbApiRequired(0x0103)
@@ -369,9 +388,9 @@ export class HackrfDevice {
 	/**
 	 * TODO
 	 * 
-	 * Requires USB API 0x0103.
+	 * Requires USB API 1.3.
 	 * 
-	 * @category Flash
+	 * @category Flash & CPLD
 	 */
 	async spiflash_clearStatus() {
 		this.usbApiRequired(0x0103)
@@ -532,7 +551,7 @@ export class HackrfDevice {
 	 * their USB transfers through a GPIO connection
 	 * between them
 	 * 
-	 * Requires USB API 0x0102.
+	 * Requires USB API 1.2.
 	 * 
 	 * @category Radio control
 	 */
@@ -544,9 +563,7 @@ export class HackrfDevice {
 	/**
 	 * Reset the device
 	 * 
-	 * Requires USB API 0x0102.
-	 * 
-	 * @category Radio control
+	 * Requires USB API 1.2.
 	 */
 	async reset() {
 		this.usbApiRequired(0x0102)
@@ -556,7 +573,7 @@ export class HackrfDevice {
 	/**
 	 * Initialize sweep mode
 	 * 
-	 * Requires USB API 0x0102.
+	 * Requires USB API 1.2.
 	 * 
 	 * @param ranges is a list of start/stop pairs of frequencies in MHz,
 	 *     no more than [[MAX_SWEEP_RANGES]] entries.
@@ -599,9 +616,9 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * Retrieve list of Operacake board addresses (uint8)
+	 * Retrieve list of Operacake board addresses (uint8, terminated by 0)
 	 * 
-	 * Requires USB API 0x0102.
+	 * Requires USB API 1.2.
 	 * 
 	 * @category Operacake
 	 */
@@ -614,7 +631,7 @@ export class HackrfDevice {
 	/**
 	 * Set Operacake ports
 	 * 
-	 * Requires USB API 0x0102.
+	 * Requires USB API 1.2.
 	 * 
 	 * @category Operacake
 	 */
@@ -636,7 +653,7 @@ export class HackrfDevice {
 	/**
 	 * TODO
 	 * 
-	 * Requires USB API 0x0103.
+	 * Requires USB API 1.3.
 	 * 
 	 * @category Operacake
 	 */
@@ -648,7 +665,7 @@ export class HackrfDevice {
 	/**
 	 * Returns test result (uint16)
 	 * 
-	 * Requires USB API 0x0103.
+	 * Requires USB API 1.3.
 	 * 
 	 * @category Operacake
 	 */
@@ -661,7 +678,7 @@ export class HackrfDevice {
 	/**
 	 * TODO
 	 * 
-	 * Requires USB API 0x0103.
+	 * Requires USB API 1.3.
 	 * 
 	 * @category Radio control
 	 */
@@ -685,9 +702,9 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * TODO
+	 * Enable / disable PortaPack display
 	 * 
-	 * Requires USB API 0x0104.
+	 * Requires USB API 1.4.
 	 * 
 	 * @category Radio control
 	 */
@@ -733,7 +750,6 @@ export class HackrfDevice {
 	 * TODO
 	 * 
 	 * 
-	 * @category Radio control
 	 */
 	async transmit(callback: PollCallback, options?: StreamOptions) {
 		await this._transfer(TransceiverMode.TRANSMIT, this.outEndpoint, callback, options)
@@ -755,7 +771,7 @@ export class HackrfDevice {
 	 * 
 	 * device will need to be reset after this
 	 * 
-	 * @category CPLD
+	 * @category Flash & CPLD
 	 */
 	async cpld_write(data: Buffer, chunkSize: number = 512) { // FIXME: make it a stream
 		await this._whileStreaming(async () => {

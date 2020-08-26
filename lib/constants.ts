@@ -8,17 +8,29 @@ export const BYTES_PER_BLOCK = 16384
 export const MAX_SWEEP_RANGES = 10
 
 export enum ErrorCode {
+	/** invalid parameter(s) */
 	INVALID_PARAM = -2,
+	/** HackRF not found */
 	NOT_FOUND = -5,
+	/** HackRF busy */
 	BUSY = -6,
+	/** insufficient memory */
 	NO_MEM = -11,
+	/** USB error */
 	LIBUSB = -1000,
+	/** transfer thread error */
 	THREAD = -1001,
+	/** streaming thread encountered an error */
 	STREAMING_THREAD_ERR = -1002,
+	/** streaming stopped */
 	STREAMING_STOPPED = -1003,
+	/** streaming terminated */
 	STREAMING_EXIT_CALLED = -1004,
+	/** feature not supported by installed firmware */
 	USB_API_VERSION = -1005,
+	/** one or more HackRFs still in use */
 	NOT_LAST_DEVICE = -2000,
+	/** unspecified error */
 	OTHER = -9999,
 }
 
@@ -65,8 +77,11 @@ export const usbBoardIdNames: { [usbBoardId: number]: string } = {
 }
 
 export enum RfPathFilter {
+	/** mixer bypass */
 	BYPASS = 0,
+	/** low pass filter */
 	LOW_PASS = 1,
+	/** high pass filter */
 	HIGH_PASS = 2,
 }
 
