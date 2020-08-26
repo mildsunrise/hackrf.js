@@ -40,22 +40,23 @@ export const defaultStreamOptions: StreamOptions = {
 // promisifiable + cancellable version of transfer
 function transfer(endpoint: Endpoint, timeout: number, buffer: Buffer) {
 	let transfer: Transfer
-	const promise = promisify(cb =>
-		transfer = endpoint.makeTransfer(0, (error, _, length) => cb(error, length)) )()
+	const promise = promisify(cb => transfer =
+		endpoint.makeTransfer(0, (error, _, length) => cb(error, length)).submit(buffer) )()
 	return { promise: promise as Promise<number>, cancel: () => transfer.cancel() }
 }
 
-type PollCallback = (x: Buffer) => undefined | false
+type PollCallback = (x: Int8Array) => undefined | void | false
 async function poll(endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
 	const opts = { ...defaultStreamOptions, ...options }
 	const isOut = endpoint instanceof InEndpoint
 	const transfers: ReturnType<typeof transfer>[] = Array(opts.transferCount!)
 	const buffers = [...transfers].map(() => Buffer.alloc(opts.transferBufferSize!))
+	const arrays = buffers.map(b => new Int8Array(b.buffer, b.byteOffset, b.byteLength))
 	const submit = (i: number) => transfers[i] = transfer(endpoint, 0, buffers[i])
 	const work = (async () => {
 		// Prepare
 		for (let i = 0; i < transfers.length; i++) {
-			if (isOut && callback(buffers[i]) === false)
+			if (isOut && callback(arrays[i]) === false)
 				return
 			submit(i)
 		}
@@ -64,7 +65,7 @@ async function poll(endpoint: Endpoint, callback: PollCallback, options?: Stream
 			const [length, i] = await Promise.race(
 				transfers.map( (x, i) => x.promise.then(length => [length, i]) ))
 			// FIXME: can length be smaller for isOut?
-			if (callback(isOut ? buffers[i] : buffers[i].subarray(0, length)) === false)
+			if (callback(isOut ? arrays[i] : arrays[i].subarray(0, length)) === false)
 				return
 			submit(i)
 		}
@@ -731,11 +732,32 @@ export class HackrfDevice {
 		}
 	}
 
+	private _stopRequested: boolean = false
+
+	/**
+	 * Requests stopping the active transfer (if there is one)
+	 * 
+	 * Calling this has the same effect as returning `false`
+	 * the next time the callback gets called. Note that the
+	 * transfer doesn't finish instantly, you still need to
+	 * wait for the promise to end. This is merely a convenience
+	 * function.
+	 */
+	requestStop() {
+		// this waits till the next callback; for RX we could do a bit better
+		this._stopRequested = true
+	}
+
 	private async _transfer(mode: TransceiverMode, endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
 		await this._whileStreaming(async () => {
+			this._stopRequested = false
 			try {
 				await this.setTransceiverMode(mode)
-				await poll(endpoint, callback, options)
+				await poll(endpoint, array => {
+					if (this._stopRequested)
+						return false
+					callback(array)
+				}, options)
 			} finally {
 				await this.setTransceiverMode(TransceiverMode.OFF)
 			}
