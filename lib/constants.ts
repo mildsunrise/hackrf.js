@@ -102,13 +102,13 @@ export enum SweepStyle {
 
 // INTERNAL
 
-export const FREQ_HZ_MIN = 0n
+export const FREQ_HZ_MIN = 0
 /** 7250MHz */
-export const FREQ_HZ_MAX = 7250000000n
-export const IF_HZ_MIN = 2150000000n
-export const IF_HZ_MAX = 2750000000n
-export const LO_FREQ_HZ_MIN = 84375000n
-export const LO_FREQ_HZ_MAX = 5400000000n
+export const FREQ_HZ_MAX = 7250000000
+export const IF_HZ_MIN = 2150000000
+export const IF_HZ_MAX = 2750000000
+export const LO_FREQ_HZ_MIN = 84375000
+export const LO_FREQ_HZ_MAX = 5400000000
 
 /** 1.75 MHz min value */
 export const BASEBAND_FILTER_BW_MIN = 1750000

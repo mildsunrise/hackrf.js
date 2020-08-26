@@ -396,13 +396,13 @@ export class HackrfDevice {
 	 * 
 	 * @category Radio control
 	 */
-	async setFrequency(freqHz: bigint) {
+	async setFrequency(freqHz: number) {
 		checkFreq(freqHz)
 		// convert Freq Hz 64bits to Freq MHz (32bits) & Freq Hz (32bits)
-		const FREQ_ONE_MHZ = BigInt(1000*1000)
+		const FREQ_ONE_MHZ = 1000*1000
 		const data = Buffer.alloc(8)
-		data.writeUInt32LE(Number(freqHz / FREQ_ONE_MHZ), 0)
-		data.writeUInt32LE(Number(freqHz % FREQ_ONE_MHZ), 4)
+		data.writeUInt32LE(freqHz / FREQ_ONE_MHZ, 0)
+		data.writeUInt32LE(freqHz % FREQ_ONE_MHZ, 4)
 		await this.controlTransferOut(VendorRequest.SET_FREQ, 0, 0, data)
 	}
 
@@ -414,7 +414,7 @@ export class HackrfDevice {
 	 * @param path image rejection filter path
 	 * @category Radio control
 	 */
-	async setFrequencyExplicit(iFreqHz: bigint, loFreqHz: bigint, path: RfPathFilter) {
+	async setFrequencyExplicit(iFreqHz: number, loFreqHz: number, path: RfPathFilter) {
 		checkIFreq(iFreqHz)
 		if (path !== RfPathFilter.BYPASS)
 			checkLoFreq(loFreqHz)
@@ -422,8 +422,8 @@ export class HackrfDevice {
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
 
 		const data = Buffer.alloc(8 + 8 + 1)
-		data.writeBigUInt64LE(iFreqHz, 0)
-		data.writeBigUInt64LE(loFreqHz, 8)
+		data.writeBigUInt64LE(BigInt(iFreqHz), 0)
+		data.writeBigUInt64LE(BigInt(loFreqHz), 8)
 		data.writeUInt8(path, 16)
 		await this.controlTransferOut(VendorRequest.SET_FREQ_EXPLICIT, 0, 0, data)
 	}
