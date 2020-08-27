@@ -163,6 +163,11 @@ export async function open(serialNumber?: string): Promise<HackrfDevice> {
  * returns the version implemented by the firmware. It's
  * strongly recommended to upgrade your device's firmware to
  * the latest version to avoid problems and glitches.
+ * 
+ * This API does strict validation of passed integers (they
+ * should be integers and be in-range). Gains, in particular,
+ * will be *rejected* instead of rounded down to the nearest
+ * step.
  */
 export class HackrfDevice {
 	private readonly handle: Device
@@ -497,9 +502,8 @@ export class HackrfDevice {
 	 * @category Radio control
 	 */
 	async setLnaGain(gainDb: number) {
-		if (checkU32(gainDb) > 40)
+		if (checkU32(gainDb) > 40 || gainDb % 8)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
-		gainDb &= ~0x07
 		const buf = await this.controlTransferIn(VendorRequest.SET_LNA_GAIN, 0, gainDb, 1)
 		if (buf.length != 1 || !buf.readUInt8())
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
@@ -511,9 +515,8 @@ export class HackrfDevice {
 	 * @category Radio control
 	 */
 	async setVgaGain(gainDb: number) {
-		if (checkU32(gainDb) > 62)
+		if (checkU32(gainDb) > 62 || gainDb % 2)
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
-		gainDb &= ~0x01
 		const buf = await this.controlTransferIn(VendorRequest.SET_VGA_GAIN, 0, gainDb, 1)
 		if (buf.length != 1 || !buf.readUInt8())
 			throw new HackrfError(ErrorCode.INVALID_PARAM)
