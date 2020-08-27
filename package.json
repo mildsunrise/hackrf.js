@@ -1,6 +1,6 @@
 {
 	"name": "hackrf.js",
-	"version": "1.0.0",
+	"version": "1.0.0-rc1",
 	"description": "Control HackRF devices from Node.js",
 	"author": "Alba Mendez <me@alba.sh>",
 	"keywords": [
