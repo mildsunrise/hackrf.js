@@ -74,24 +74,25 @@ async function poll(endpoint: Endpoint, callback: PollCallback, options?: Stream
 		isOut ? p.then(() => x?.promise.then()) : p.finally(x?.cancel), work)
 }
 
+// libusb is not well-designed for the manual configuration case,
+// and we need to use internals. See tessel/node-usb#377 for context
+
 const getActiveConfig = (device: Device) =>
 	device.__getConfigDescriptor().bConfigurationValue
 
 function detachKernelDrivers(handle: Device) {
-	// FIXME: currently disabled because https://github.com/tessel/node-usb/pull/377
-	return
-
-	for (const iface of handle.interfaces) {
+	const { bNumInterfaces } = handle.__getConfigDescriptor()
+	for (let num = 0; num < bNumInterfaces; num++) {
 		let active: boolean
 		try {
-			active = iface.isKernelDriverActive()
+			active = handle.__isKernelDriverActive(num)
 		} catch (e) {
 			if (e instanceof LibUSBException && e.errno === LIBUSB_ERROR_NOT_SUPPORTED)
 				return
 			throw e
 		}
 		if (active)
-			iface.detachKernelDriver()
+			handle.__detachKernelDriver(num)
 	}
 }
 
@@ -188,10 +189,11 @@ export class HackrfDevice {
 	 */
 	static async open(device: Device) {
 		device.open(false)
-		if (getActiveConfig(device) !== USB_CONFIG_STANDARD) {
-			detachKernelDrivers(device)
-			await promisify(cb => device.setConfiguration(USB_CONFIG_STANDARD, cb as any) )()
-		}
+		// FIXME: disabled because usb's API won't let us
+		// if (getActiveConfig(device) !== USB_CONFIG_STANDARD) {
+		detachKernelDrivers(device)
+		await promisify(cb => device.setConfiguration(USB_CONFIG_STANDARD, cb as any) )()
+		// }
 		detachKernelDrivers(device)
 		const iface = device.interface(0)
 		iface.claim()
