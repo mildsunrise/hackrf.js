@@ -184,6 +184,7 @@ export class HackrfDevice {
 	 * instead of this function directly.
 	 * 
 	 * @param device USB device (must not be open)
+	 * @category Main
 	 */
 	static async open(device: Device) {
 		device.open(false)
@@ -226,9 +227,11 @@ export class HackrfDevice {
 	 * Unless the device is used until process exit, this **must** be
 	 * called once when it's no longer needed.
 	 * 
-	 * There must be no pending promises or an active transfer when
+	 * There must be no pending promises or an active stream when
 	 * calling this. After return, no more methods should be called
 	 * on this object.
+	 * 
+	 * @category Main
 	 */
 	async close() {
 		await promisify(cb => this.iface.release(cb as any))()
@@ -269,6 +272,8 @@ export class HackrfDevice {
 	}
 
 	/**
+	 * Query the firmware version
+	 * 
 	 * @category Device info
 	 */
 	async getVersionString() {
@@ -549,7 +554,7 @@ export class HackrfDevice {
 	 * 
 	 * Multiple boards can be made to syncronize
 	 * their USB transfers through a GPIO connection
-	 * between them
+	 * between them.
 	 * 
 	 * Requires USB API 1.2.
 	 * 
@@ -564,6 +569,8 @@ export class HackrfDevice {
 	 * Reset the device
 	 * 
 	 * Requires USB API 1.2.
+	 * 
+	 * @category Main
 	 */
 	async reset() {
 		this.usbApiRequired(0x0102)
@@ -575,7 +582,7 @@ export class HackrfDevice {
 	 * 
 	 * Requires USB API 1.2.
 	 * 
-	 * @param ranges is a list of start/stop pairs of frequencies in MHz,
+	 * @param ranges is a list of `[start, stop]` pairs of frequencies in MHz,
 	 *     no more than [[MAX_SWEEP_RANGES]] entries.
 	 * @param numBytes the number of sample bytes to capture after each tuning.
 	 * @param stepWidth the width in Hz of the tuning step.
@@ -616,11 +623,11 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * Retrieve list of Operacake board addresses (uint8, terminated by 0)
+	 * Retrieve list of Opera Cake board addresses (uint8, terminated by 0)
 	 * 
 	 * Requires USB API 1.2.
 	 * 
-	 * @category Operacake
+	 * @category Opera Cake
 	 */
 	async getOperacakeBoards() {
 		this.usbApiRequired(0x0102)
@@ -629,11 +636,11 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * Set Operacake ports
+	 * Set Opera Cake ports
 	 * 
 	 * Requires USB API 1.2.
 	 * 
-	 * @category Operacake
+	 * @category Opera Cake
 	 */
 	async setOperacakePorts(address: number, portA: OperacakePorts, portB: OperacakePorts) {
 		this.usbApiRequired(0x0102)
@@ -651,11 +658,11 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * TODO
+	 * Set Opera Cake [frequency-antenna ranges](https://github.com/mossmann/hackrf/wiki/Opera-Cake#opera-glasses)
 	 * 
 	 * Requires USB API 1.3.
 	 * 
-	 * @category Operacake
+	 * @category Opera Cake
 	 */
 	async setOperacakeRanges(ranges: Buffer) {
 		this.usbApiRequired(0x0103)
@@ -663,11 +670,13 @@ export class HackrfDevice {
 	}
 
 	/**
+	 * Test GPIO functionality of an Opera Cake
+	 * 
 	 * Returns test result (uint16)
 	 * 
 	 * Requires USB API 1.3.
 	 * 
-	 * @category Operacake
+	 * @category Opera Cake
 	 */
 	async operacakeGpioTest(address: number) {
 		this.usbApiRequired(0x0103)
@@ -676,7 +685,7 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * TODO
+	 * Enable / disable clock output through CLKOUT
 	 * 
 	 * Requires USB API 1.3.
 	 * 
@@ -718,13 +727,13 @@ export class HackrfDevice {
 	private _streaming: boolean = false
 
 	/**
-	 * Returns `true` if there's an active transfer.
+	 * Returns `true` if there's an active stream.
 	 */
 	get streaming() {
 		return this._streaming
 	}
 
-	private async _whileStreaming(callback: () => Promise<void>) {
+	private async _lockStream(callback: () => Promise<void>) {
 		if (this._streaming)
 			throw new HackrfError(ErrorCode.BUSY)
 		try {
@@ -738,21 +747,23 @@ export class HackrfDevice {
 	private _stopRequested: boolean = false
 
 	/**
-	 * Requests stopping the active transfer (if there is one)
+	 * Requests stopping the active stream (if there is one)
 	 * 
 	 * Calling this has the same effect as returning `false`
 	 * the next time the callback gets called. Note that the
-	 * transfer doesn't finish instantly, you still need to
+	 * stream doesn't finish instantly, you still need to
 	 * wait for the promise to end. This is merely a convenience
 	 * function.
+	 * 
+	 * @category Main
 	 */
 	requestStop() {
 		// this waits till the next callback; for RX we could do a bit better
 		this._stopRequested = true
 	}
 
-	private async _transfer(mode: TransceiverMode, endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
-		await this._whileStreaming(async () => {
+	private async _stream(mode: TransceiverMode, endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
+		await this._lockStream(async () => {
 			this._stopRequested = false
 			try {
 				await this.setTransceiverMode(mode)
@@ -768,34 +779,72 @@ export class HackrfDevice {
 	}
 
 	/**
-	 * TODO
+	 * Put the radio in TX mode and stream I/Q samples
 	 * 
+	 * The supplied callback will be regularly called with an
+	 * `Int8Array` buffer to fill before return. Every two
+	 * values of the buffer form an I/Q sample. Different
+	 * buffers may be passed or reused, so avoid storing
+	 * references to them after return.
 	 * 
+	 * To request ending the stream, return `false` from the
+	 * callback or use [[requestStop]].
+	 * 
+	 * This throws if there's another stream in progress.
+	 * 
+	 * @category Main
 	 */
 	async transmit(callback: PollCallback, options?: StreamOptions) {
-		await this._transfer(TransceiverMode.TRANSMIT, this.outEndpoint, callback, options)
-	}
-
-	async receive(callback: PollCallback, options?: StreamOptions) {
-		await this._transfer(TransceiverMode.RECEIVE, this.inEndpoint, callback, options)
-	}
-
-	async sweepReceive(callback: PollCallback, options?: StreamOptions) {
-		this.usbApiRequired(0x0104)
-		await this._transfer(TransceiverMode.RX_SWEEP, this.inEndpoint, callback, options)
+		await this._stream(TransceiverMode.TRANSMIT, this.outEndpoint, callback, options)
 	}
 
 	/**
-	 * TODO
+	 * Put the radio in RX mode and stream I/Q samples
 	 * 
-	 * This throws if there's another transfer in progress.
+	 * The supplied callback will be regularly called with an
+	 * `Int8Array` buffer. Every two values of the buffer
+	 * form a received I/Q sample. The buffer may be overwritten
+	 * later, so avoid storing any reference to it; instead
+	 * make a copy of the data if needed.
 	 * 
-	 * device will need to be reset after this
+	 * To request ending the stream, return `false` from the
+	 * callback or use [[requestStop]].
+	 * 
+	 * This throws if there's another stream in progress.
+	 *
+	 * @category Main
+	 */
+	async receive(callback: PollCallback, options?: StreamOptions) {
+		await this._stream(TransceiverMode.RECEIVE, this.inEndpoint, callback, options)
+	}
+
+	/**
+	 * Put the radio in sweep RX mode and stream I/Q samples
+	 * 
+	 * Like [[receive]], but with frequency sweep active.
+	 * You should call [[initSweep]] first.
+	 * 
+	 * Requires USB API 1.4.
+	 * 
+	 * @category Main
+	 */
+	async sweepReceive(callback: PollCallback, options?: StreamOptions) {
+		this.usbApiRequired(0x0104)
+		await this._stream(TransceiverMode.RX_SWEEP, this.inEndpoint, callback, options)
+	}
+
+	/**
+	 * Put the radio in CPLD firmware upgrade mode and
+	 * write the payload
+	 * 
+	 * This throws if there's another stream in progress.
+	 * 
+	 * The device will need to be reset after this.
 	 * 
 	 * @category Flash & CPLD
 	 */
 	async cpld_write(data: Buffer, chunkSize: number = 512) { // FIXME: make it a stream
-		await this._whileStreaming(async () => {
+		await this._lockStream(async () => {
 			await this.setTransceiverMode(TransceiverMode.CPLD_UPDATE)
 			for (let i = 0; i < data.length; i += chunkSize)
 				await promisify(cb => this.outEndpoint.transfer(
