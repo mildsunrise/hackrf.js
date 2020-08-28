@@ -14,9 +14,9 @@ async function main() {
 
 	const device = await open()
 	await device.setFrequency(carrierFrequency)
+	await device.setSampleRate(fs)
 	await device.setAmpEnable(false)
 	await device.setTxVgaGain(30)
-	await device.setSampleRate(fs)
 
 	const tone = makeToneGenerator(fs, toneFrequency, toneAmplitude)
 	const modulator = makeFreqModulator(fs, carrierDeviation, carrierAmplitude)
