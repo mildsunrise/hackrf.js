@@ -48,7 +48,7 @@ function transfer(endpoint: Endpoint, timeout: number, buffer: Buffer) {
 type PollCallback = (x: Int8Array) => undefined | void | false
 async function poll(endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
 	const opts = { ...defaultStreamOptions, ...options }
-	const isOut = endpoint instanceof InEndpoint
+	const isOut = endpoint instanceof OutEndpoint
 	const transfers: ReturnType<typeof transfer>[] = Array(opts.transferCount!)
 	const buffers = [...transfers].map(() => Buffer.alloc(opts.transferBufferSize!))
 	const arrays = buffers.map(b => new Int8Array(b.buffer, b.byteOffset, b.byteLength))
