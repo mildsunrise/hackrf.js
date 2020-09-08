@@ -7,7 +7,7 @@
  */
 
 import { open } from '..'
-import Speaker from 'speaker'
+import Speaker = require('speaker')
 
 async function main() {
 	const fs = 1200e3

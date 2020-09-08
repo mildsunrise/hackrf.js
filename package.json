@@ -26,6 +26,7 @@
 		"test": "jest --coverage",
 		"test:watch": "jest --coverage --watch",
 		"docs": "typedoc --out docs lib/index.ts",
+		"build-examples": "cd examples && tsc",
 		"report-coverage": "cat ./coverage/lcov.info | coveralls"
 	},
 	"files": [
