@@ -2,7 +2,7 @@
  * Transmit a tone through FM radio.
  */
 
-import { open } from '..'
+import { open } from '../lib'
 
 async function main() {
 	const fs = 2e6

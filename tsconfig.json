@@ -17,6 +17,7 @@
 		"emitDecoratorMetadata": true
 	},
 	"include": [
-		"lib"
+		"lib",
+		"examples"
 	]
 }
