@@ -6,7 +6,7 @@
  * (SDR - audio card) but it should be functional.
  */
 
-import { open } from '..'
+import { open } from '../lib'
 import Speaker from 'speaker'
 
 async function main() {
