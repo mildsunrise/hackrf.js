@@ -64,6 +64,33 @@ If you no longer need the device, you must call `device.close()` to release it (
 See the [reference][api] for the full API.
 
 
+## Troubleshooting
+
+- Gains go in steps: for instance, [`setLnaGain`][] only allows multiples of **8dB**. Non-multiples or out of range values will be rejected, not rounded.
+
+- When transmitting, you should round or dither values before setting them on `Int8Array`. You should also check for out of range values.
+
+- In the event of a Control+C, the process will exit and the radio will **not** be stopped if there was a transfer in progress. To avoid this, handle Control+C as necessary; for simple programs, calling `requestStop()` might be enough:
+
+  ~~~ js
+  process.on('SIGINT', () => device.requestStop())
+  ~~~
+
+
+## Motivation
+
+Motivations for writing a port (versus using [node-hackrf][] binary bindings) include:
+
+- Expose the complete API; better control
+- No native module / dependency, we rely on [usb][] for everything
+  - We benefit from its prebuilds & support
+- Integrate correctly with the event loop
+  - Avoid blocking the loop for i.e. control transfers
+  - Avoid spinning up additional threads to transfer data
+- More natural & safe user-facing API
+- Can be useful for hackers or learning USB
+
+
 
 [usb]: https://www.npmjs.com/package/usb
 [libhackrf]: https://github.com/mossmann/hackrf/tree/master/host
@@ -76,3 +103,4 @@ See the [reference][api] for the full API.
 [`receive`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#receive
 [`sweepReceive`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#sweepReceive
 [`transmit`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#transmit
+[`setLnaGain`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#setlnagain
