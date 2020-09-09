@@ -29,7 +29,12 @@ import {
 } from './util'
 
 export interface StreamOptions {
+	/** number of concurrent transfers */
 	transferCount?: number
+	/**
+	 * size of each transfer.
+	 * should be multiple of packet size to avoid overflow
+	 */
 	transferBufferSize?: number
 }
 
@@ -58,11 +63,8 @@ async function poll(endpoint: Endpoint, callback: PollCallback, options?: Stream
 
 	const work = async (): Promise<unknown> => {
 		// Prepare
-		for (let i = 0; i < transfers.length; i++) {
-			if (isOut && callback(arrays[i]) === false)
-				return
+		for (let i = 0; i < transfers.length; i++)
 			submit(i)
-		}
 		// Loop
 		while (true) {
 			const [length, i] = await Promise.race(
