@@ -21,6 +21,7 @@ import {
 } from './constants'
 
 import {
+	CancellablePromise,
 	HackrfError, checkU32, checkU16, checkU8, checkSpiflashAddress,
 	checkIFreq, checkLoFreq, checkBasebandFilterBw, checkFreq,
 	checkMax2837Reg, checkMax2837Value, checkSi5351cReg, checkSi5351cValue,
@@ -37,13 +38,14 @@ export const defaultStreamOptions: StreamOptions = {
 	transferBufferSize: 262144,
 }
 
-// promisifiable + cancellable version of transfer
-function transfer(endpoint: Endpoint, timeout: number, buffer: Buffer) {
-	let transfer: Transfer
-	const promise = promisify(cb => transfer =
-		endpoint.makeTransfer(0, (error, _, length) => cb(error, length)).submit(buffer) )()
-	return { promise: promise as Promise<number>, cancel: () => transfer.cancel() }
-}
+// CancellablePromise version of transfer
+const transfer = (endpoint: Endpoint, timeout: number, buffer: Buffer) =>
+	new CancellablePromise<number>((resolve, reject) => {
+		let transfer = endpoint.makeTransfer(timeout, (error, _, length) =>
+			error ? reject(error) : resolve(length))
+		transfer.submit(buffer)
+		return () => transfer.cancel()
+	})
 
 type PollCallback = (x: Int8Array) => undefined | void | false
 async function poll(endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
@@ -53,7 +55,8 @@ async function poll(endpoint: Endpoint, callback: PollCallback, options?: Stream
 	const buffers = [...transfers].map(() => Buffer.alloc(opts.transferBufferSize!))
 	const arrays = buffers.map(b => new Int8Array(b.buffer, b.byteOffset, b.byteLength))
 	const submit = (i: number) => transfers[i] = transfer(endpoint, 0, buffers[i])
-	const work = (async () => {
+
+	const work = async (): Promise<unknown> => {
 		// Prepare
 		for (let i = 0; i < transfers.length; i++) {
 			if (isOut && callback(arrays[i]) === false)
@@ -63,15 +66,16 @@ async function poll(endpoint: Endpoint, callback: PollCallback, options?: Stream
 		// Loop
 		while (true) {
 			const [length, i] = await Promise.race(
-				transfers.map( (x, i) => x.promise.then(length => [length, i]) ))
+				transfers.map( (x, i) => x.then(length => [length, i]) ))
 			// FIXME: can length be smaller for isOut?
 			if (callback(isOut ? arrays[i] : arrays[i].subarray(0, length)) === false)
 				return
 			submit(i)
 		}
-	})()
+	}
+
 	return transfers.reduce((p, x) =>
-		isOut ? p.then(() => x?.promise.then()) : p.finally(x?.cancel), work)
+		isOut ? p.then(() => x) : p.finally(() => x?.cancel()), work())
 }
 
 // libusb is not well-designed for the manual configuration case,
