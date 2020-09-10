@@ -10,7 +10,7 @@ import {
 	Device, Interface, Endpoint, InEndpoint, OutEndpoint, Transfer, LibUSBException,
 	getDeviceList, findByIds, LIBUSB_ERROR_NOT_SUPPORTED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
-	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK,
+	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK, LIBUSB_TRANSFER_CANCELLED,
 } from 'usb'
 
 import {
@@ -21,7 +21,6 @@ import {
 } from './constants'
 
 import {
-	CancellablePromise,
 	HackrfError, checkU32, checkU16, checkU8, checkSpiflashAddress,
 	checkIFreq, checkLoFreq, checkBasebandFilterBw, checkFreq,
 	checkMax2837Reg, checkMax2837Value, checkSi5351cReg, checkSi5351cValue,
@@ -43,42 +42,90 @@ export const defaultStreamOptions: StreamOptions = {
 	transferBufferSize: 262144,
 }
 
-// CancellablePromise version of transfer
-const transfer = (endpoint: Endpoint, timeout: number, buffer: Buffer) =>
-	new CancellablePromise<number>((resolve, reject) => {
-		let transfer = endpoint.makeTransfer(timeout, (error, _, length) =>
-			error ? reject(error) : resolve(length))
-		transfer.submit(buffer)
-		return () => transfer.cancel()
-	})
-
 type PollCallback = (x: Int8Array) => undefined | void | false
-async function poll(endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
+const poll = (
+	setup: () => void | PromiseLike<void>,
+	endpoint: Endpoint,
+	callback: PollCallback,
+	options?: StreamOptions
+) => new Promise((resolve, reject) => {
 	const opts = { ...defaultStreamOptions, ...options }
 	const isOut = endpoint instanceof OutEndpoint
-	const transfers: ReturnType<typeof transfer>[] = Array(opts.transferCount!)
-	const buffers = [...transfers].map(() => Buffer.alloc(opts.transferBufferSize!))
-	const arrays = buffers.map(b => new Int8Array(b.buffer, b.byteOffset, b.byteLength))
-	const submit = (i: number) => transfers[i] = transfer(endpoint, 0, buffers[i])
 
-	const work = async (): Promise<unknown> => {
-		// Prepare
-		for (let i = 0; i < transfers.length; i++)
-			submit(i)
-		// Loop
-		while (true) {
-			const [length, i] = await Promise.race(
-				transfers.map( (x, i) => x.then(length => [length, i]) ))
-			// FIXME: can length be smaller for isOut?
-			if (callback(isOut ? arrays[i] : arrays[i].subarray(0, length)) === false)
-				return
-			submit(i)
+	const pendingTransfers = new Set<Transfer>()
+	let cancelled = false
+	const tryCancel = () => {
+		if (cancelled) return
+		pendingTransfers.forEach(x => {
+			try {
+				x.cancel()
+			} catch (e) {}
+		})
+		cancelled = true
+	}
+
+	let settled = false
+	let rejected = false
+	let reason: any
+	const wrapResolve = () =>
+		(settled = true, !isOut && tryCancel())
+	const wrapReject = (x: any) =>
+		(settled = true, rejected = true, reason = x, tryCancel())
+	const safeCall = (fn: () => void) => {
+		if (settled) return
+		try {
+			fn()
+		} catch (e) {
+			wrapReject(e)
+		}
+	}
+	const doSettle = () => {
+		if (settled && pendingTransfers.size === 0)
+			rejected ? reject(reason) : resolve()
+	}
+
+	// allocate / fill buffers
+	const tasks: (() => void)[] = []
+	for (let i = 0; !settled && i < opts.transferCount!; i++) {
+		const buffer = Buffer.alloc(opts.transferBufferSize!)
+		const array = new Int8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+		if (isOut) {
+			if (callback(array) === false)
+				break
+		}
+		tasks.push(submitTransfer)
+
+		function submitTransfer() {
+			const transfer = endpoint.makeTransfer(0, transferCallback).submit(buffer)
+			pendingTransfers.add(transfer)
+
+			function transferCallback(error?: LibUSBException, b?: any, length?: number) {
+				if (cancelled && error?.errno === LIBUSB_TRANSFER_CANCELLED)
+					error = undefined
+				if (!rejected && error)
+					wrapReject(error)
+				// potentially heavy callback... move to the next tick
+				// to prevent starving the loop (setImmediate preserves order)
+				settled ? inNextTick() : setImmediate(inNextTick)
+				function inNextTick() {
+					pendingTransfers.delete(transfer)
+					safeCall(() => {
+						if (callback(isOut ? array : array.subarray(0, length)) === false)
+							wrapResolve()
+					})
+					safeCall(submitTransfer)
+					doSettle()
+				}
+			}
 		}
 	}
 
-	return transfers.reduce((p, x) =>
-		isOut ? p.then(() => x) : p.finally(() => x?.cancel()), work())
-}
+	// start the stream
+	Promise.resolve(setup()).then(() => {
+		tasks.forEach(submitTransfer => safeCall(submitTransfer))
+		doSettle()
+	}, reject)
+})
 
 // libusb is not well-designed for the manual configuration case,
 // and we need to use internals. See tessel/node-usb#377 for context
@@ -766,7 +813,7 @@ export class HackrfDevice {
 	 * @category Main
 	 */
 	requestStop() {
-		// this waits till the next callback; for RX we could do a bit better
+		// FIXME: this waits till the next callback; for RX we could do a bit better
 		this._stopRequested = true
 	}
 
@@ -774,11 +821,11 @@ export class HackrfDevice {
 		await this._lockStream(async () => {
 			this._stopRequested = false
 			try {
-				await this.setTransceiverMode(mode)
-				await poll(endpoint, array => {
+				const setup = () => this.setTransceiverMode(mode)
+				await poll(setup, endpoint, array => {
 					if (this._stopRequested)
 						return false
-					callback(array)
+					return callback(array)
 				}, options)
 			} finally {
 				await this.setTransceiverMode(TransceiverMode.OFF)
@@ -796,7 +843,12 @@ export class HackrfDevice {
 	 * references to them after return.
 	 * 
 	 * To request ending the stream, return `false` from the
-	 * callback or use [[requestStop]].
+	 * callback or use [[requestStop]] (the callback will no
+	 * longer be called and the current buffer will not be
+	 * transmitted). Any transfer / callback error rejects
+	 * the promise and cancels all transfers. The promise won't
+	 * settle until all transfers are finished, regardless of
+	 * whether the stream is ended or errored.
 	 * 
 	 * This throws if there's another stream in progress.
 	 * 
@@ -811,12 +863,16 @@ export class HackrfDevice {
 	 * 
 	 * The supplied callback will be regularly called with an
 	 * `Int8Array` buffer. Every two values of the buffer
-	 * form a received I/Q sample. The buffer may be overwritten
+	 * form an I/Q sample. The buffer may be overwritten
 	 * later, so avoid storing any reference to it; instead
 	 * make a copy of the data if needed.
 	 * 
 	 * To request ending the stream, return `false` from the
-	 * callback or use [[requestStop]].
+	 * callback or use [[requestStop]] (the callback will no
+	 * longer be called). Any transfer / callback error rejects
+	 * the promise and cancels all transfers. The promise won't
+	 * settle until all transfers are finished, regardless of
+	 * whether the stream is ended or errored.
 	 * 
 	 * This throws if there's another stream in progress.
 	 *
