@@ -15,7 +15,7 @@ async function main() {
 	const fs = 1.2e6
 	const carrierFrequency = 97e6
 	const carrierAmplitude = 1
-	const carrierDeviation = 100e3  // 150kHz bandwidth
+	const carrierDeviation = 75e3  // 150kHz bandwidth
 	const audioFilename = process.argv[2]
 
 	const device = await open()
