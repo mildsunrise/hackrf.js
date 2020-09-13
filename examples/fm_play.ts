@@ -64,7 +64,7 @@ async function main() {
 			array.set(signal(), n * 2)
 	})
 	await new Promise((resolve, reject) => {
-		transmission?.then(resolve, reject)
+		transmission.then(resolve, reject)
 		conversion.catch(reject)
 	})
 		.finally(() => !(ffmpeg.exitCode || ffmpeg.signalCode) && ffmpeg.kill())
