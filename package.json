@@ -62,8 +62,7 @@
 	},
 	"dependencies": {
 		"@types/node": "^13.13.15",
-		"@types/usb": "^1.5.2",
-		"usb": "^1.6.3"
+		"usb": "^2.1.2"
 	},
 	"devDependencies": {
 		"@types/jest": "^23.3.14",

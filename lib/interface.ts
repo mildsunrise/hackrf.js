@@ -6,12 +6,18 @@
 
 import { promisify } from 'util'
 
-import {
-	Device, Interface, Endpoint, InEndpoint, OutEndpoint, Transfer, LibUSBException,
-	getDeviceList, findByIds, LIBUSB_ERROR_NOT_SUPPORTED,
+import { usb, findByIds, getDeviceList } from 'usb'
+const {
+	LibUSBException,
+	LIBUSB_ERROR_NOT_SUPPORTED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
 	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK, LIBUSB_TRANSFER_CANCELLED,
-} from 'usb'
+} = usb
+type LibUSBException = usb.LibUSBException
+type Device = usb.Device
+type Transfer = usb.Transfer
+import { Interface } from 'usb/dist/usb/interface'
+import { Endpoint, InEndpoint, OutEndpoint } from 'usb/dist/usb/endpoint'
 
 import {
 	BYTES_PER_BLOCK, MAX_SWEEP_RANGES,
@@ -48,7 +54,7 @@ const poll = (
 	endpoint: Endpoint,
 	callback: PollCallback,
 	options?: StreamOptions
-) => new Promise((resolve, reject) => {
+) => new Promise<void>((resolve, reject) => {
 	const opts = { ...defaultStreamOptions, ...options }
 	const isOut = endpoint instanceof OutEndpoint
 

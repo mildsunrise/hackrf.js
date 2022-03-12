@@ -12,7 +12,7 @@ import {
 /** Promise with asynchronous abort semantics */
 export class CancellablePromise<T> extends Promise<T> {
 	_cancel: () => void
-	constructor(executor: (resolve: (value?: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => (() => void)) {
+	constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => (() => void)) {
 		let cancel: () => void
 		super((resolve, reject) => (cancel = executor(resolve, reject)))
 		this._cancel = cancel!
