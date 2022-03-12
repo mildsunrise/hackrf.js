@@ -96,11 +96,11 @@ Motivations for writing a port (versus using [node-hackrf][] binary bindings) in
 [libhackrf]: https://github.com/mossmann/hackrf/tree/master/host
 [node-hackrf]: https://www.npmjs.com/package/hackrf
 
-[api]: https://hackrf.alba.sh/docs/globals.html
-[`listDevices`]: https://hackrf.alba.sh/docs/globals.html#open
-[`open`]: https://hackrf.alba.sh/docs/globals.html#open
-[`HackrfDevice`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html
-[`receive`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#receive
-[`sweepReceive`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#sweepReceive
-[`transmit`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#transmit
-[`setLnaGain`]: https://hackrf.alba.sh/docs/classes/hackrfdevice.html#setlnagain
+[api]: https://hackrf.alba.sh/docs/modules.html
+[`listDevices`]: https://hackrf.alba.sh/docs/modules.html#listDevices
+[`open`]: https://hackrf.alba.sh/docs/modules.html#open
+[`HackrfDevice`]: https://hackrf.alba.sh/docs/classes/HackrfDevice.html
+[`receive`]: https://hackrf.alba.sh/docs/classes/HackrfDevice.html#receive
+[`sweepReceive`]: https://hackrf.alba.sh/docs/classes/HackrfDevice.html#sweepReceive
+[`transmit`]: https://hackrf.alba.sh/docs/classes/HackrfDevice.html#transmit
+[`setLnaGain`]: https://hackrf.alba.sh/docs/classes/HackrfDevice.html#setLnaGain
