@@ -1,7 +1,7 @@
 /**
  * Enums and constants
+ * @module
  */
-/** */
 
 export const SAMPLES_PER_BLOCK = 8192
 export const BYTES_PER_BLOCK = 16384

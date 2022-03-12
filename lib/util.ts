@@ -1,7 +1,7 @@
 /**
  * Contains validation logic and other computations
+ * @module
  */
-/** */
 
 import {
 	ErrorCode,

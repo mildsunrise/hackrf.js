@@ -1,8 +1,8 @@
 /**
  * Main module, contains the USB interfacing code
  * and user-facing API
+ * @module
  */
-/** */
 
 import { promisify } from 'util'
 
