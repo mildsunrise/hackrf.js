@@ -1,13 +1,34 @@
 /**
  * Contains validation logic and other computations
+ * @module
  */
-/** */
 
 import {
 	ErrorCode,
 	LO_FREQ_HZ_MIN, LO_FREQ_HZ_MAX, FREQ_HZ_MIN, FREQ_HZ_MAX, IF_HZ_MIN, IF_HZ_MAX,
 	BASEBAND_FILTER_BW_MAX, BASEBAND_FILTER_BW_MIN
 } from "./constants"
+
+/** Promise with asynchronous abort semantics */
+export class CancellablePromise<T> extends Promise<T> {
+	_cancel: () => void
+	constructor(executor: (resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: any) => void) => (() => void)) {
+		let cancel: () => void
+		super((resolve, reject) => (cancel = executor(resolve, reject)))
+		this._cancel = cancel!
+	}
+
+	/**
+	 * Request a cancellation of this promise. Even if this
+	 * returns successfully, you still need to wait for the
+	 * promise to settle. Cancellation will result in rejection
+	 * with a special error, but it's also possible that the
+	 * promise resolves or rejects with another error.
+	 */
+	cancel() {
+		this._cancel()
+	}
+}
 
 
 /** each entry is a uint32 (bandwidth in hz) */

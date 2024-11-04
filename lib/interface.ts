@@ -1,17 +1,23 @@
 /**
  * Main module, contains the USB interfacing code
  * and user-facing API
+ * @module
  */
-/** */
 
 import { promisify } from 'util'
 
-import {
-	Device, Interface, Endpoint, InEndpoint, OutEndpoint, Transfer, LibUSBException,
-	getDeviceList, findByIds, LIBUSB_ERROR_NOT_SUPPORTED,
+import { usb, findByIds, getDeviceList } from 'usb'
+const {
+	LibUSBException,
+	LIBUSB_ERROR_NOT_SUPPORTED,
 	LIBUSB_ENDPOINT_OUT, LIBUSB_ENDPOINT_IN,
-	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK,
-} from 'usb'
+	LIBUSB_REQUEST_TYPE_VENDOR, LIBUSB_RECIPIENT_DEVICE, LIBUSB_TRANSFER_TYPE_BULK, LIBUSB_TRANSFER_CANCELLED,
+} = usb
+type LibUSBException = usb.LibUSBException
+type Device = usb.Device
+type Transfer = usb.Transfer
+import { Interface } from 'usb/dist/usb/interface'
+import { Endpoint, InEndpoint, OutEndpoint } from 'usb/dist/usb/endpoint'
 
 import {
 	BYTES_PER_BLOCK, MAX_SWEEP_RANGES,
@@ -28,7 +34,12 @@ import {
 } from './util'
 
 export interface StreamOptions {
+	/** number of concurrent transfers */
 	transferCount?: number
+	/**
+	 * size of each transfer.
+	 * should be multiple of packet size to avoid overflow
+	 */
 	transferBufferSize?: number
 }
 
@@ -37,42 +48,90 @@ export const defaultStreamOptions: StreamOptions = {
 	transferBufferSize: 262144,
 }
 
-// promisifiable + cancellable version of transfer
-function transfer(endpoint: Endpoint, timeout: number, buffer: Buffer) {
-	let transfer: Transfer
-	const promise = promisify(cb => transfer =
-		endpoint.makeTransfer(0, (error, _, length) => cb(error, length)).submit(buffer) )()
-	return { promise: promise as Promise<number>, cancel: () => transfer.cancel() }
-}
-
 type PollCallback = (x: Int8Array) => undefined | void | false
-async function poll(endpoint: Endpoint, callback: PollCallback, options?: StreamOptions) {
+const poll = (
+	setup: () => void | PromiseLike<void>,
+	endpoint: Endpoint,
+	callback: PollCallback,
+	options?: StreamOptions
+) => new Promise<void>((resolve, reject) => {
 	const opts = { ...defaultStreamOptions, ...options }
 	const isOut = endpoint instanceof OutEndpoint
-	const transfers: ReturnType<typeof transfer>[] = Array(opts.transferCount!)
-	const buffers = [...transfers].map(() => Buffer.alloc(opts.transferBufferSize!))
-	const arrays = buffers.map(b => new Int8Array(b.buffer, b.byteOffset, b.byteLength))
-	const submit = (i: number) => transfers[i] = transfer(endpoint, 0, buffers[i])
-	const work = (async () => {
-		// Prepare
-		for (let i = 0; i < transfers.length; i++) {
-			if (isOut && callback(arrays[i]) === false)
-				return
-			submit(i)
+
+	const pendingTransfers = new Set<Transfer>()
+	let cancelled = false
+	const tryCancel = () => {
+		if (cancelled) return
+		pendingTransfers.forEach(x => {
+			try {
+				x.cancel()
+			} catch (e) {}
+		})
+		cancelled = true
+	}
+
+	let settled = false
+	let rejected = false
+	let reason: any
+	const wrapResolve = () =>
+		(settled = true, !isOut && tryCancel())
+	const wrapReject = (x: any) =>
+		(settled = true, rejected = true, reason = x, tryCancel())
+	const safeCall = (fn: () => void) => {
+		if (settled) return
+		try {
+			fn()
+		} catch (e) {
+			wrapReject(e)
 		}
-		// Loop
-		while (true) {
-			const [length, i] = await Promise.race(
-				transfers.map( (x, i) => x.promise.then(length => [length, i]) ))
-			// FIXME: can length be smaller for isOut?
-			if (callback(isOut ? arrays[i] : arrays[i].subarray(0, length)) === false)
-				return
-			submit(i)
+	}
+	const doSettle = () => {
+		if (settled && pendingTransfers.size === 0)
+			rejected ? reject(reason) : resolve()
+	}
+
+	// allocate / fill buffers
+	const tasks: (() => void)[] = []
+	for (let i = 0; !settled && i < opts.transferCount!; i++) {
+		const buffer = Buffer.alloc(opts.transferBufferSize!)
+		const array = new Int8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+		if (isOut) {
+			if (callback(array) === false)
+				break
 		}
-	})()
-	return transfers.reduce((p, x) =>
-		isOut ? p.then(() => x?.promise.then()) : p.finally(x?.cancel), work)
-}
+		tasks.push(submitTransfer)
+
+		function submitTransfer() {
+			const transfer = endpoint.makeTransfer(0, transferCallback).submit(buffer)
+			pendingTransfers.add(transfer)
+
+			function transferCallback(error?: LibUSBException, b?: any, length?: number) {
+				if (cancelled && error?.errno === LIBUSB_TRANSFER_CANCELLED)
+					error = undefined
+				if (!rejected && error)
+					wrapReject(error)
+				// potentially heavy callback... move to the next tick
+				// to prevent starving the loop (setImmediate preserves order)
+				settled ? inNextTick() : setImmediate(inNextTick)
+				function inNextTick() {
+					pendingTransfers.delete(transfer)
+					safeCall(() => {
+						if (callback(isOut ? array : array.subarray(0, length)) === false)
+							wrapResolve()
+					})
+					safeCall(submitTransfer)
+					doSettle()
+				}
+			}
+		}
+	}
+
+	// start the stream
+	Promise.resolve(setup()).then(() => {
+		tasks.forEach(submitTransfer => safeCall(submitTransfer))
+		doSettle()
+	}, reject)
+})
 
 // libusb is not well-designed for the manual configuration case,
 // and we need to use internals. See tessel/node-usb#377 for context
@@ -132,7 +191,7 @@ export async function* listDevices() {
 /**
  * Open the first device whose serial number ends with the passed suffix.
  * If no suffix is passed, open the first device.
- * 
+ *
  * @param serialNumber Serial number suffix to match
  */
 export async function open(serialNumber?: string): Promise<HackrfDevice> {
@@ -153,10 +212,10 @@ export async function open(serialNumber?: string): Promise<HackrfDevice> {
 
 /**
  * Reference to an open HackRF device
- * 
+ *
  * This is mostly a direct API to the USB interface. Call
  * [[close]] when no longer needed.
- * 
+ *
  * Keep in mind some methods require a certain API version
  * to be implemented by your device's firmware; this is noted
  * in their documentation, and an `USB_API_VERSION` error will
@@ -164,7 +223,7 @@ export async function open(serialNumber?: string): Promise<HackrfDevice> {
  * returns the version implemented by the firmware. It's
  * strongly recommended to upgrade your device's firmware to
  * the latest version to avoid problems and glitches.
- * 
+ *
  * This API does strict validation of passed integers (they
  * should be integers and be in-range). Gains, in particular,
  * will be *rejected* instead of rounded down to the nearest
@@ -179,11 +238,11 @@ export class HackrfDevice {
 
 	/**
 	 * Open the passed USB device
-	 * 
+	 *
 	 * This function does **not** validate the device,
 	 * it's recommended to use the `open` module function
 	 * instead of this function directly.
-	 * 
+	 *
 	 * @param device USB device (must not be open)
 	 * @category Main
 	 */
@@ -225,14 +284,14 @@ export class HackrfDevice {
 
 	/**
 	 * Release resources and close the USB device
-	 * 
+	 *
 	 * Unless the device is used until process exit, this **must** be
 	 * called once when it's no longer needed.
-	 * 
+	 *
 	 * There must be no pending promises or an active stream when
 	 * calling this. After return, no more methods should be called
 	 * on this object.
-	 * 
+	 *
 	 * @category Main
 	 */
 	async close() {
@@ -243,7 +302,7 @@ export class HackrfDevice {
 
 	/**
 	 * Version of the USB API implemented by the device's firmware
-	 * 
+	 *
 	 * In `0xAABB` form (`AA` = major, `BB` = minor).
 	 */
 	get usbApiVersion() {
@@ -275,7 +334,7 @@ export class HackrfDevice {
 
 	/**
 	 * Query the firmware version
-	 * 
+	 *
 	 * @category Device info
 	 */
 	async getVersionString() {
@@ -346,7 +405,7 @@ export class HackrfDevice {
 			0, checkRffc5071Reg(register), 2)
 		return checkInLength(buf, 2).readUInt16LE()
 	}
-	
+
 	/**
 	 * @category IC
 	 */
@@ -354,7 +413,7 @@ export class HackrfDevice {
 		await this.controlTransferOut(VendorRequest.RFFC5071_WRITE,
 			checkRffc5071Value(value), checkRffc5071Reg(register))
 	}
-	
+
 	/**
 	 * @category Flash & CPLD
 	 */
@@ -370,7 +429,7 @@ export class HackrfDevice {
 		await this.controlTransferOut(VendorRequest.SPIFLASH_WRITE,
 			address >>> 16, address & 0xFFFF, data)
 	}
-	
+
 	/**
 	 * @category Flash & CPLD
 	 */
@@ -380,12 +439,12 @@ export class HackrfDevice {
 			address >>> 16, address & 0xFFFF, length)
 		return checkInLength(buf, length)
 	}
-	
+
 	/**
 	 * TODO
-	 * 
+	 *
 	 * Requires USB API 1.3.
-	 * 
+	 *
 	 * @category Flash & CPLD
 	 */
 	async spiflash_getStatus() {
@@ -393,12 +452,12 @@ export class HackrfDevice {
 		const buf = await this.controlTransferIn(VendorRequest.SPIFLASH_STATUS, 0, 0, 2)
 		return checkInLength(buf, 1) // FIXME
 	}
-	
+
 	/**
 	 * TODO
-	 * 
+	 *
 	 * Requires USB API 1.3.
-	 * 
+	 *
 	 * @category Flash & CPLD
 	 */
 	async spiflash_clearStatus() {
@@ -408,9 +467,9 @@ export class HackrfDevice {
 
 	/**
 	 * Set baseband filter bandwidth in Hz
-	 * 
+	 *
 	 * Possible values: 1.75/2.5/3.5/5/5.5/6/7/8/9/10/12/14/15/20/24/28MHz
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setBasebandFilterBandwidth(freqHz: number) {
@@ -421,7 +480,7 @@ export class HackrfDevice {
 
 	/**
 	 * Set the tuning frequency
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setFrequency(freqHz: number) {
@@ -436,7 +495,7 @@ export class HackrfDevice {
 
 	/**
 	 * Set the tuning frequency (raw version)
-	 * 
+	 *
 	 * @param iFreqHz intermediate frequency
 	 * @param loFreqHz front-end local oscillator frequency
 	 * @param path image rejection filter path
@@ -458,17 +517,17 @@ export class HackrfDevice {
 
 	/**
 	 * Set the sample rate (raw version)
-	 * 
+	 *
 	 * You should probably use [[setSampleRate]] instead of this
 	 * function.
-	 * 
+	 *
 	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
 	 * widest available setting that is no more than 75% of the sample rate.  This
 	 * happens every time the sample rate is set.  If you want to override the
 	 * baseband filter selection, you must do so after setting the sample rate.
-	 * 
+	 *
 	 * 2-20Mhz - as a fraction, i.e. freq 20000000 divider 2 -> 10Mhz
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setSampleRateManual(freqHz: number, divider: number) {
@@ -480,14 +539,14 @@ export class HackrfDevice {
 
 	/**
 	 * Set the sample rate
-	 * 
+	 *
 	 * For anti-aliasing, the baseband filter bandwidth is automatically set to the
 	 * widest available setting that is no more than 75% of the sample rate.  This
 	 * happens every time the sample rate is set.  If you want to override the
 	 * baseband filter selection, you must do so after setting the sample rate.
-	 * 
+	 *
 	 * @param freqHz frequency in Hz, 2-20MHz (double)
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setSampleRate(freqHz: number) {
@@ -496,7 +555,7 @@ export class HackrfDevice {
 
 	/**
 	 * Enable / disable RX/TX RF external amplifier
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setAmpEnable(value: boolean) {
@@ -505,7 +564,7 @@ export class HackrfDevice {
 
 	/**
 	 * Set RX LNA (IF) gain, 0-40dB in 8dB steps
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setLnaGain(gainDb: number) {
@@ -518,7 +577,7 @@ export class HackrfDevice {
 
 	/**
 	 * Set RX VGA (baseband) gain, 0-62dB in 2dB steps
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setVgaGain(gainDb: number) {
@@ -531,7 +590,7 @@ export class HackrfDevice {
 
 	/**
 	 * Set TX VGA (IF) gain, 0-47dB in 1dB steps
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setTxVgaGain(gainDb: number) {
@@ -544,7 +603,7 @@ export class HackrfDevice {
 
 	/**
 	 * Antenna port power control
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setAntennaEnable(value: boolean) {
@@ -553,13 +612,13 @@ export class HackrfDevice {
 
 	/**
 	 * Enable / disable hardware sync
-	 * 
+	 *
 	 * Multiple boards can be made to syncronize
 	 * their USB transfers through a GPIO connection
 	 * between them.
-	 * 
+	 *
 	 * Requires USB API 1.2.
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setHwSyncMode(value: boolean) {
@@ -569,9 +628,9 @@ export class HackrfDevice {
 
 	/**
 	 * Reset the device
-	 * 
+	 *
 	 * Requires USB API 1.2.
-	 * 
+	 *
 	 * @category Main
 	 */
 	async reset() {
@@ -581,9 +640,9 @@ export class HackrfDevice {
 
 	/**
 	 * Initialize sweep mode
-	 * 
+	 *
 	 * Requires USB API 1.2.
-	 * 
+	 *
 	 * @param ranges is a list of `[start, stop]` pairs of frequencies in MHz,
 	 *     no more than [[MAX_SWEEP_RANGES]] entries.
 	 * @param numBytes the number of sample bytes to capture after each tuning.
@@ -626,9 +685,9 @@ export class HackrfDevice {
 
 	/**
 	 * Retrieve list of Opera Cake board addresses (uint8, terminated by 0)
-	 * 
+	 *
 	 * Requires USB API 1.2.
-	 * 
+	 *
 	 * @category Opera Cake
 	 */
 	async getOperacakeBoards() {
@@ -639,9 +698,9 @@ export class HackrfDevice {
 
 	/**
 	 * Set Opera Cake ports
-	 * 
+	 *
 	 * Requires USB API 1.2.
-	 * 
+	 *
 	 * @category Opera Cake
 	 */
 	async setOperacakePorts(address: number, portA: OperacakePorts, portB: OperacakePorts) {
@@ -661,9 +720,9 @@ export class HackrfDevice {
 
 	/**
 	 * Set Opera Cake [frequency-antenna ranges](https://github.com/mossmann/hackrf/wiki/Opera-Cake#opera-glasses)
-	 * 
+	 *
 	 * Requires USB API 1.3.
-	 * 
+	 *
 	 * @category Opera Cake
 	 */
 	async setOperacakeRanges(ranges: Buffer) {
@@ -673,11 +732,11 @@ export class HackrfDevice {
 
 	/**
 	 * Test GPIO functionality of an Opera Cake
-	 * 
+	 *
 	 * Returns test result (uint16)
-	 * 
+	 *
 	 * Requires USB API 1.3.
-	 * 
+	 *
 	 * @category Opera Cake
 	 */
 	async operacakeGpioTest(address: number) {
@@ -688,9 +747,9 @@ export class HackrfDevice {
 
 	/**
 	 * Enable / disable clock output through CLKOUT
-	 * 
+	 *
 	 * Requires USB API 1.3.
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setClkoutEnable(value: boolean) {
@@ -701,9 +760,9 @@ export class HackrfDevice {
 	// Disabled for now, see https://github.com/mossmann/hackrf/issues/609
 	// /**
 	//  * Returns crc32 (uint32)
-	//  * 
+	//  *
 	//  * Requires USB API 1.3.
-	//  * 
+	//  *
 	//  * @category Flash & CPLD
 	//  */
 	// async cpld_checksum() {
@@ -714,9 +773,9 @@ export class HackrfDevice {
 
 	/**
 	 * Enable / disable PortaPack display
-	 * 
+	 *
 	 * Requires USB API 1.4.
-	 * 
+	 *
 	 * @category Radio control
 	 */
 	async setUiEnable(value: boolean) {
@@ -750,17 +809,17 @@ export class HackrfDevice {
 
 	/**
 	 * Requests stopping the active stream (if there is one)
-	 * 
+	 *
 	 * Calling this has the same effect as returning `false`
 	 * the next time the callback gets called. Note that the
 	 * stream doesn't finish instantly, you still need to
 	 * wait for the promise to end. This is merely a convenience
 	 * function.
-	 * 
+	 *
 	 * @category Main
 	 */
 	requestStop() {
-		// this waits till the next callback; for RX we could do a bit better
+		// FIXME: this waits till the next callback; for RX we could do a bit better
 		this._stopRequested = true
 	}
 
@@ -768,11 +827,11 @@ export class HackrfDevice {
 		await this._lockStream(async () => {
 			this._stopRequested = false
 			try {
-				await this.setTransceiverMode(mode)
-				await poll(endpoint, array => {
+				const setup = () => this.setTransceiverMode(mode)
+				await poll(setup, endpoint, array => {
 					if (this._stopRequested)
 						return false
-					callback(array)
+					return callback(array)
 				}, options)
 			} finally {
 				await this.setTransceiverMode(TransceiverMode.OFF)
@@ -782,18 +841,23 @@ export class HackrfDevice {
 
 	/**
 	 * Put the radio in TX mode and stream I/Q samples
-	 * 
+	 *
 	 * The supplied callback will be regularly called with an
 	 * `Int8Array` buffer to fill before return. Every two
 	 * values of the buffer form an I/Q sample. Different
 	 * buffers may be passed or reused, so avoid storing
 	 * references to them after return.
-	 * 
+	 *
 	 * To request ending the stream, return `false` from the
-	 * callback or use [[requestStop]].
-	 * 
+	 * callback or use [[requestStop]] (the callback will no
+	 * longer be called and the current buffer will not be
+	 * transmitted). Any transfer / callback error rejects
+	 * the promise and cancels all transfers. The promise won't
+	 * settle until all transfers are finished, regardless of
+	 * whether the stream is ended or errored.
+	 *
 	 * This throws if there's another stream in progress.
-	 * 
+	 *
 	 * @category Main
 	 */
 	async transmit(callback: PollCallback, options?: StreamOptions) {
@@ -802,16 +866,20 @@ export class HackrfDevice {
 
 	/**
 	 * Put the radio in RX mode and stream I/Q samples
-	 * 
+	 *
 	 * The supplied callback will be regularly called with an
 	 * `Int8Array` buffer. Every two values of the buffer
-	 * form a received I/Q sample. The buffer may be overwritten
+	 * form an I/Q sample. The buffer may be overwritten
 	 * later, so avoid storing any reference to it; instead
 	 * make a copy of the data if needed.
-	 * 
+	 *
 	 * To request ending the stream, return `false` from the
-	 * callback or use [[requestStop]].
-	 * 
+	 * callback or use [[requestStop]] (the callback will no
+	 * longer be called). Any transfer / callback error rejects
+	 * the promise and cancels all transfers. The promise won't
+	 * settle until all transfers are finished, regardless of
+	 * whether the stream is ended or errored.
+	 *
 	 * This throws if there's another stream in progress.
 	 *
 	 * @category Main
@@ -822,12 +890,12 @@ export class HackrfDevice {
 
 	/**
 	 * Put the radio in sweep RX mode and stream I/Q samples
-	 * 
+	 *
 	 * Like [[receive]], but with frequency sweep active.
 	 * You should call [[initSweep]] first.
-	 * 
+	 *
 	 * Requires USB API 1.4.
-	 * 
+	 *
 	 * @category Main
 	 */
 	async sweepReceive(callback: PollCallback, options?: StreamOptions) {
@@ -838,11 +906,11 @@ export class HackrfDevice {
 	/**
 	 * Put the radio in CPLD firmware upgrade mode and
 	 * write the payload
-	 * 
+	 *
 	 * This throws if there's another stream in progress.
-	 * 
+	 *
 	 * The device will need to be reset after this.
-	 * 
+	 *
 	 * @category Flash & CPLD
 	 */
 	async cpld_write(data: Buffer, chunkSize: number = 512) { // FIXME: make it a stream

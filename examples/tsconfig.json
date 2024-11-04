@@ -9,15 +9,8 @@
 		"noImplicitAny": true,
 		"strictBindCallApply": true,
 		"strictNullChecks": true,
-		"sourceMap": true,
-		"outDir": "dist",
-		"declaration": true,
 		"allowSyntheticDefaultImports": true,
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true
-	},
-	"include": [
-		"lib",
-		"examples"
-	]
+	}
 }

@@ -26,6 +26,7 @@
 		"test": "jest --coverage",
 		"test:watch": "jest --coverage --watch",
 		"docs": "typedoc --out docs lib/index.ts",
+		"build-examples": "cd examples && tsc",
 		"report-coverage": "cat ./coverage/lcov.info | coveralls"
 	},
 	"files": [
@@ -60,18 +61,14 @@
 		]
 	},
 	"dependencies": {
-		"@types/node": "^13.13.15",
-		"@types/usb": "^1.5.2",
-		"usb": "^1.6.3"
+		"@types/node": "^22.8.7",
+		"@types/usb": "^2.0.5",
+		"usb": "^2.14.0"
 	},
 	"devDependencies": {
-		"@types/jest": "^23.3.14",
-		"coveralls": "^3.1.0",
-		"jest": "^26.4.2",
-		"speaker": "https://github.com/cjheath/node-speaker.git",
-		"ts-jest": "^26.2.0",
-		"ts-node": "^9.0.0",
-		"typedoc": "^0.17.0-3",
-		"typescript": "^4.0.0"
+		"@types/jest": "^29.5.14",
+		"coveralls": "^3.1.1",
+		"speaker": "^0.5.5",
+		"typescript": "^5.6.3"
 	}
 }

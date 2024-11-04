@@ -18,16 +18,16 @@ async function main() {
 	await device.setAmpEnable(false)
 	await device.setTxVgaGain(30)
 
-	const tone = makeToneGenerator(fs, toneFrequency, toneAmplitude)
-	const modulator = makeFreqModulator(fs, carrierDeviation, carrierAmplitude)
+	const tone = makeToneGeneratorF(fs, toneFrequency, toneAmplitude)
+	const modulator = makeFrequencyMod(fs, carrierDeviation, carrierAmplitude)
 	const signal = () => quantize( modulator(tone()) )
 
 	console.log(`Transmitting at ${(carrierFrequency/1e6).toFixed(2)}MHz...`)
 	process.on('SIGINT', () => device.requestStop())
-	await device.transmit(buffer => {
-		const samples = buffer.length / 2
+	await device.transmit(array => {
+		const samples = array.length / 2
 		for (let n = 0; n < samples; n++)
-			buffer.set(signal(), n * 2)
+			array.set(signal(), n * 2)
 	})
 	console.log('\nDone, exiting')
 }
@@ -36,7 +36,7 @@ main()
 type Complex = [number, number]
 const TAU = 2 * Math.PI
 
-function makeToneGenerator(fs: number, frequency: number, amplitude: number = 1) {
+function makeToneGeneratorF(fs: number, frequency: number, amplitude: number = 1) {
 	let phase = 0
 	const delta = (TAU * Math.abs(frequency) / fs) % TAU
 	return () => {
@@ -46,7 +46,7 @@ function makeToneGenerator(fs: number, frequency: number, amplitude: number = 1)
 	}
 }
 
-function makeFreqModulator(fs: number, maxDeviation: number, amplitude: number = 1) {
+function makeFrequencyMod(fs: number, maxDeviation: number, amplitude: number = 1) {
 	let phase = 0
 	const delta = TAU * maxDeviation / fs
 	return (x: number): Complex => {
