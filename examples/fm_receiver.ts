@@ -8,7 +8,6 @@
 
 import { open } from '../lib'
 import Speaker from 'speaker'
-// import Speaker = require('speaker')
 
 async function main() {
 	const fs = 1200e3
@@ -50,7 +49,11 @@ async function main() {
 	const signal = (x: Complex) => channelFilter(shifter(x))
 
 	console.error(`Receiving at ${(carrierFrequency/1e6).toFixed(2)}MHz...`)
-	process.on('SIGINT', () => device.requestStop())
+	speaker.on('close', () => { console.error(`Speaker closed`); });
+	process.on('SIGINT', () => {
+	  speaker.end();    // Close the stream, triggering the Speaker close event
+	  device.requestStop();
+	} )
 	await device.receive(array => {
 		const samples = array.length / 2
 		for (let n = 0; n < samples; n++)
