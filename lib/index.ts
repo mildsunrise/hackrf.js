@@ -20,3 +20,7 @@ export {
 	DeviceInfo, HackrfDevice, listDevices, open,
 	StreamOptions, defaultStreamOptions,
 } from './interface'
+
+export {
+	visible_hackrfs, scan_hackrfs
+} from './scan'

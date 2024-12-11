@@ -15,12 +15,13 @@ async function main() {
 	const carrierFrequency = 101.7e6
 	const carrierDeviation = 75e3
 
-	const device = await open()
+	const serial = process.argv[2]
+	const device = await open(serial)
 	await device.setFrequency(carrierFrequency + tuneOffset)
 	await device.setSampleRate(fs)
 	await device.setAmpEnable(false)
-	await device.setLnaGain(24)
-	await device.setVgaGain(8)
+	await device.setLnaGain(32)
+	await device.setVgaGain(22)
 
 	// Collect audio samples & play back
 	const speaker = new Speaker({ sampleRate: 48000, channels: 1, bitDepth: 16 })
@@ -61,6 +62,7 @@ async function main() {
 	})
 	speaker.destroy()
 	console.error('\nDone, exiting')
+	process.exit(0)
 }
 main()
 
