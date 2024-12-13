@@ -6,6 +6,8 @@
  */
 import { open, HackrfDevice, DeviceInfo, UsbBoardId } from '../lib'
 
+import { reception_test } from "./reception_test"
+
 type Complex = [number, number]
 
 function timeout(ms: number) {
@@ -36,7 +38,7 @@ class FFT {
     }
 }
 
-async function noise_floor_test(dut: HackrfDevice, frequency: number, sample_rate: number): Promise<number | string> {
+async function noise_floor_test(dut: HackrfDevice, frequency: number, sample_rate: number): Promise<number> {
     console.log(`Measuring noise floor at ${frequency}`)
 
     const num_seconds = 1;
@@ -67,24 +69,26 @@ async function noise_floor_test(dut: HackrfDevice, frequency: number, sample_rat
     return fft.noise_floor();
 }
 
-export async function run_test_sequence(rig: DeviceInfo, dut: DeviceInfo)
+export async function run_test_sequence(rig_info: DeviceInfo, dut_info: DeviceInfo)
 {
-    const device: HackrfDevice = await open(dut.serialNumber)
-    if (!device)
-	return `device ${dut.serialNumber} not available`;
+    const rig: HackrfDevice = await open(rig_info.serialNumber)
+    if (!rig)
+	return `rig ${rig_info.serialNumber} not available`;
 
-    console.log(`Testing ${dut.serialNumber} using ${rig.serialNumber}:\n`);
+    const dut: HackrfDevice = await open(dut_info.serialNumber)
+    if (!dut)
+	return `HackRF ${dut_info.serialNumber} not available`;
+
+    console.log(`Testing ${dut_info.serialNumber} using ${rig_info.serialNumber}:\n`);
 
     const frequencies = [80e6, 600e6, 2.4e9, 3.6e9]
-    var i: number;
-    for (i = 0; i < frequencies.length; i++) {
+    for (let i = 0; i < frequencies.length; i++) {
 	const frequency = frequencies[i];
-	var noise_floor = await noise_floor_test(device, frequency, 1.2e6);
-	if (typeof(noise_floor) == 'string')
-	{
-	    console.log("Failed to open DUT for testing");
-	    return;
-	}
+	var noise_floor = await noise_floor_test(dut, frequency, 1.2e6);
 	console.log(`Noise floor at ${frequency/1e6} is ${Math.round(noise_floor*1280)/10}`)
     }
+
+    var frequency = frequencies[0];
+    var receive_result = await reception_test(rig, dut, frequency);
+    console.log(`Reception at ${frequency/1e6} returned ${receive_result}`)
 }

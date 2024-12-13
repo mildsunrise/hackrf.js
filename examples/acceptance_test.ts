@@ -64,7 +64,7 @@ async function main() {
 	console.log(`Detected ${dut.serialNumber} as DUT`)
 
 	await run_test_sequence(rig, dut)
-	break;
+	break;	  // REVISIT: Just one run for now :)
     }
     process.exit(0)
 }
