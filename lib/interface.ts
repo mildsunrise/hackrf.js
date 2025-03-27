@@ -157,7 +157,8 @@ function detachKernelDrivers(handle: Device) {
 
 export interface DeviceInfo {
 	device: Device
-	usbBoardId: number
+	usbBoardId: number    // USB Product ID (PID)
+	boardRev?: number
 	serialNumber?: string
 }
 
@@ -179,6 +180,8 @@ export async function* listDevices() {
 				device.open(false)
 				info.serialNumber = await promisify(cb =>
 					device.getStringDescriptor(iSerialNumber, cb) )() as string
+				let hackRF = await HackrfDevice.open(device);
+				info.boardRev = await hackRF.getBoardRev()
 			} catch (e) {
 			} finally {
 				device.close()
@@ -920,5 +923,13 @@ export class HackrfDevice {
 				await promisify(cb => this.outEndpoint.transfer(
 					data.subarray(i, i + chunkSize), cb as any) )()
 		})
+	}
+
+	/**
+	 * @category Device info
+	 */
+	async getBoardRev() {
+		const buf = await this.controlTransferIn(VendorRequest.BOARD_REV_READ, 0, 0, 1)
+		return checkInLength(buf, 1).readUInt8()
 	}
 }
