@@ -6,21 +6,22 @@
  * (SDR - audio card) but it should be functional.
  */
 
-import { open } from '..'
-import Speaker = require('speaker')
+import { open } from '../lib'
+import Speaker from 'speaker'
 
 async function main() {
 	const fs = 1200e3
 	const tuneOffset = -120e3
-	const carrierFrequency = 98.8e6
+	const carrierFrequency = 101.7e6
 	const carrierDeviation = 75e3
 
-	const device = await open()
+	const serial = process.argv[2]
+	const device = await open(serial)
 	await device.setFrequency(carrierFrequency + tuneOffset)
 	await device.setSampleRate(fs)
 	await device.setAmpEnable(false)
-	await device.setLnaGain(24)
-	await device.setVgaGain(8)
+	await device.setLnaGain(32)
+	await device.setVgaGain(22)
 
 	// Collect audio samples & play back
 	const speaker = new Speaker({ sampleRate: 48000, channels: 1, bitDepth: 16 })
@@ -49,7 +50,11 @@ async function main() {
 	const signal = (x: Complex) => channelFilter(shifter(x))
 
 	console.error(`Receiving at ${(carrierFrequency/1e6).toFixed(2)}MHz...`)
-	process.on('SIGINT', () => device.requestStop())
+	speaker.on('close', () => { console.error(`Speaker closed`); });
+	process.on('SIGINT', () => {
+	  speaker.end();    // Close the stream, triggering the Speaker close event
+	  device.requestStop();
+	} )
 	await device.receive(array => {
 		const samples = array.length / 2
 		for (let n = 0; n < samples; n++)
@@ -57,6 +62,7 @@ async function main() {
 	})
 	speaker.destroy()
 	console.error('\nDone, exiting')
+	process.exit(0)
 }
 main()
 

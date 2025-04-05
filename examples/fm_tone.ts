@@ -2,7 +2,7 @@
  * Transmit a tone through FM radio.
  */
 
-import { open } from '..'
+import { open } from '../lib'
 
 async function main() {
 	const fs = 2e6
@@ -12,24 +12,28 @@ async function main() {
 	const toneFrequency = 400
 	const toneAmplitude = .4
 
-	const device = await open()
+	const serial = process.argv[2]
+	const device = await open(serial)
 	await device.setFrequency(carrierFrequency)
 	await device.setSampleRate(fs)
 	await device.setAmpEnable(false)
-	await device.setTxVgaGain(30)
+	await device.setTxVgaGain(47)
 
 	const tone = makeToneGeneratorF(fs, toneFrequency, toneAmplitude)
 	const modulator = makeFrequencyMod(fs, carrierDeviation, carrierAmplitude)
 	const signal = () => quantize( modulator(tone()) )
 
 	console.log(`Transmitting at ${(carrierFrequency/1e6).toFixed(2)}MHz...`)
-	process.on('SIGINT', () => device.requestStop())
+	process.on('SIGINT', () => { device.requestStop(); })
+	let block_count = 0;
 	await device.transmit(array => {
+		block_count++;
 		const samples = array.length / 2
 		for (let n = 0; n < samples; n++)
 			array.set(signal(), n * 2)
 	})
-	console.log('\nDone, exiting')
+	console.log(`\nDone after ${block_count} blocks, exiting`);
+	process.exit(0)
 }
 main()
 

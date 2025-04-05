@@ -5,7 +5,7 @@
  * stereo, etc). Requires the ffmpeg tool to be present.
  */
 
-import { open } from '..'
+import { open } from '../lib'
 import { once, EventEmitter } from 'events'
 import { promises as fsPromises } from 'fs'
 import { Readable } from 'stream'
@@ -56,7 +56,7 @@ async function main() {
 
 	console.log(`Transmitting at ${(carrierFrequency/1e6).toFixed(2)}MHz...`)
 	process.on('SIGINT', () => device.requestStop())
-	const transmission = device.transmit(array => {
+	const transmission = device.transmit((array : Int8Array) => {
 		if (audioBuffer.complete && audioBuffer.queueSize === 0)
 			return false
 		const samples = array.length / 2
